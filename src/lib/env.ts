@@ -1,5 +1,6 @@
 import "server-only";
 
+import { readFileSync } from "node:fs";
 import path from "node:path";
 
 import { z } from "zod";
@@ -26,16 +27,50 @@ const required = (name: string, fix: string) =>
 const optional = <T extends z.ZodType>(schema: T) =>
   z.preprocess(unsetIfEmpty, schema.optional());
 
-const schema = z.object({
+const flag = (name: string) =>
+  z
+    .preprocess(unsetIfEmpty, z.string().trim().toLowerCase().default("false"))
+    .pipe(z.enum(["true", "false"], { error: (issue) => `${name} must be true or false (got "${String(issue.input)}").` }))
+    .transform((value) => value === "true");
+
+const objectSchema = z.object({
+  // How people sign in: "password" (one shared password, one profile) or
+  // "oidc" (each person signs in with an OpenID Connect provider such as
+  // Authentik and gets a profile of their own). Defaults to oidc when
+  // DOSSIER_OIDC_ISSUER is set.
+  DOSSIER_AUTH: optional(
+    z.enum(["password", "oidc"], {
+      error: (issue) => `DOSSIER_AUTH must be password or oidc (got "${String(issue.input)}").`,
+    }),
+  ),
   // Never echo the value: it may be the password itself, set by mistake.
-  DOSSIER_PASSWORD: required(
-    "DOSSIER_PASSWORD",
-    `Set it to a hash of the password you want to sign in with. ${HASH_PASSWORD}.`,
-  ).pipe(
+  DOSSIER_PASSWORD: optional(
     z.string().trim().refine(isPasswordHash, {
       error: `DOSSIER_PASSWORD must be a hash of your password, not the password itself. ${HASH_PASSWORD} and set DOSSIER_PASSWORD to what it prints.`,
     }),
   ),
+  // Password sign-in over plain HTTP sends the password readable to anyone on
+  // the network, so it's refused unless the browser is on this machine.
+  // true allows it anyway (not recommended).
+  DOSSIER_ALLOW_INSECURE_LOGIN: flag("DOSSIER_ALLOW_INSECURE_LOGIN"),
+  // OpenID Connect (DOSSIER_AUTH=oidc). The issuer is the provider's base,
+  // e.g. https://auth.example.com/application/o/dossier/ for Authentik.
+  DOSSIER_OIDC_ISSUER: optional(
+    z.url({ protocol: /^https?$/, error: "DOSSIER_OIDC_ISSUER must be an http:// or https:// URL." }),
+  ),
+  DOSSIER_OIDC_CLIENT_ID: optional(z.string().trim()),
+  // Never echo the value.
+  DOSSIER_OIDC_CLIENT_SECRET: optional(z.string().trim()),
+  // Only members of one of these groups (the `groups` claim, comma-separated)
+  // may sign in. Unset: anyone the provider lets through.
+  DOSSIER_OIDC_ALLOWED_GROUPS: optional(z.string())
+    .transform((value) => value?.split(",").map((group) => group.trim()).filter(Boolean) ?? []),
+  // The user name (or `sub`) of the person who keeps the data from before
+  // multi-user sign-in (the database in DATABASE_URL). Everyone else starts
+  // with an empty profile of their own.
+  DOSSIER_OIDC_OWNER: optional(z.string().trim().toLowerCase()),
+  // The name on the sign-in button.
+  DOSSIER_OIDC_NAME: z.preprocess(unsetIfEmpty, z.string().trim().default("Authentik")),
   DOSSIER_SECRET: required(
     "DOSSIER_SECRET",
     `Set it to a random string of at least ${SECRET_MIN_LENGTH} characters, ${GENERATE_SECRET}.`,
@@ -149,7 +184,61 @@ const schema = z.object({
   ),
 });
 
+const schema = objectSchema
+  .transform((env) => ({
+    ...env,
+    DOSSIER_AUTH: env.DOSSIER_AUTH ?? (env.DOSSIER_OIDC_ISSUER ? ("oidc" as const) : ("password" as const)),
+  }))
+  .superRefine((env, context) => {
+    const problem = (message: string) => context.addIssue({ code: "custom", message });
+    if (env.DOSSIER_AUTH === "password" && !env.DOSSIER_PASSWORD) {
+      problem(`DOSSIER_PASSWORD is not set. Set it to a hash of the password you want to sign in with. ${HASH_PASSWORD}. Or sign in with Authentik instead: set DOSSIER_OIDC_ISSUER, DOSSIER_OIDC_CLIENT_ID and DOSSIER_OIDC_CLIENT_SECRET.`);
+    }
+    if (env.DOSSIER_AUTH === "oidc") {
+      for (const name of ["DOSSIER_OIDC_ISSUER", "DOSSIER_OIDC_CLIENT_ID", "DOSSIER_OIDC_CLIENT_SECRET"] as const) {
+        if (!env[name]) problem(`${name} is not set. Signing in with OIDC (DOSSIER_AUTH=oidc) needs it; see "Signing in with Authentik" in the README.`);
+      }
+    }
+  });
+
 export type Env = z.infer<typeof schema>;
+
+/**
+ * Secrets that can come from a file instead, as Docker secrets do:
+ * DOSSIER_SECRET_FILE=/run/secrets/dossier_secret. A file keeps the value out
+ * of `docker inspect` and the process list. The variable itself wins when
+ * both are set.
+ */
+export const FILE_SECRETS = [
+  "DATABASE_URL",
+  "DOSSIER_SECRET",
+  "DOSSIER_PASSWORD",
+  "DOSSIER_OIDC_CLIENT_SECRET",
+  "DOSSIER_AI_KEY",
+  "DOSSIER_JSEARCH_KEY",
+  "DOSSIER_ADZUNA_KEY",
+  "DOSSIER_GOOGLE_CLIENT_SECRET",
+] as const;
+
+/** `source` with each <NAME>_FILE in FILE_SECRETS read into <NAME>. */
+export function readSecretFiles(
+  source: Record<string, string | undefined>,
+  read: (file: string) => string = (file) => readFileSync(file, "utf8"),
+): Record<string, string | undefined> {
+  const result = { ...source };
+  const problems: string[] = [];
+  for (const name of FILE_SECRETS) {
+    const file = source[`${name}_FILE`]?.trim();
+    if (!file || unsetIfEmpty(source[name]) !== undefined) continue;
+    try {
+      result[name] = read(file).replace(/\r?\n$/, "");
+    } catch {
+      problems.push(`${name}_FILE points to ${file}, which can't be read.`);
+    }
+  }
+  if (problems.length > 0) throw new EnvError(problems);
+  return result;
+}
 
 /** Thrown when the environment is invalid; `problems` has one message per variable. */
 export class EnvError extends Error {
@@ -171,7 +260,7 @@ export function parseEnv(source: Record<string, string | undefined>): Env {
 let cached: Env | undefined;
 
 function load(): Env {
-  cached ??= parseEnv(process.env);
+  cached ??= parseEnv(readSecretFiles(process.env));
   return cached;
 }
 

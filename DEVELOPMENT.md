@@ -133,6 +133,14 @@ In server code, `getSession()` returns the session or null, and `verifySession()
 
 Failed sign-ins are rate-limited in Postgres: after 5 failures within a minute from one IP, attempts are refused for 30 seconds, then 60, 120 and so on up to 15 minutes. The IP is the last `X-Forwarded-For` entry, which is the real client behind a reverse proxy but can be faked when the app is exposed directly, so 30 failures within 10 minutes from all IPs together also trigger the backoff. If you lock yourself out while developing, clear the counters with `docker compose exec db psql -U postgres -d dossier -c 'DELETE FROM "LoginThrottle"'`.
 
+### Several users (OIDC)
+
+With `DOSSIER_AUTH=oidc` (on when `DOSSIER_OIDC_ISSUER` is set), people sign in through an OpenID Connect provider such as Authentik: `/api/auth/login` starts the authorization code flow with PKCE, and `/api/auth/callback` checks the state cookie and the ID token (`src/lib/auth/oidc.ts`). Each user is a tenant with a database of their own (`src/lib/tenant.ts`, `src/lib/tenants.ts`): `DATABASE_URL`'s database for the default tenant, `<name>_u<20 hex digits>` for everyone else, created on first sign-in and migrated on every start.
+
+Code keeps using `prisma`: it picks the current tenant's client on every access. In a request that's the tenant `src/proxy.ts` put on the request in `x-dossier-tenant`, signed with a key from `DOSSIER_SECRET`; background work (the job runner, nightly backups, the inbox check, `after()` callbacks) runs inside `runWithTenant()`. Without either, `currentTenant()` throws rather than guess. Things that belong to the server, not a user (sign-in rate limits, the health check), use `systemPrisma`. Files go under `dataDir()`.
+
+With password sign-in there is only the default tenant, so nothing changes.
+
 ## AI provider
 
 Dossier reads job postings and writes drafts with the model you choose in Settings → AI provider: a local model through Ollama or llama.cpp, any OpenAI-compatible server, or Anthropic. Until you save a choice there, the `DOSSIER_AI_*` variables decide (see `.env.example`). API keys are stored encrypted with a key derived from `DOSSIER_SECRET`, and never sent back to the browser.

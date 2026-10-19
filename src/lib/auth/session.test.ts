@@ -24,6 +24,7 @@ describe("session tokens", () => {
     const token = await encodeSession({ persistent: false }, { key, fingerprint, now });
     expect(await decodeSession(token, { key, fingerprint, now })).toEqual({
       persistent: false,
+      tenant: "default",
       issuedAt: now,
       expiresAt: later(24 * 60 * 60),
     });
@@ -53,6 +54,18 @@ describe("session tokens", () => {
     expect(await decodeSession(token, { key: otherKey, fingerprint, now })).toBeNull();
     expect(await decodeSession("not-a-token", { key, fingerprint, now })).toBeNull();
     expect(await decodeSession(undefined, { key, fingerprint, now })).toBeNull();
+  });
+
+  it("carries the user's tenant and name, and refuses a malformed tenant", async () => {
+    const token = await encodeSession({ persistent: false, tenant: "u0123456789abcdef0123", name: "Sam" }, { key, fingerprint, now });
+    expect(await decodeSession(token, { key, fingerprint, now })).toMatchObject({ tenant: "u0123456789abcdef0123", name: "Sam" });
+
+    const bad = await new EncryptJWT({ persistent: false, pwd: fingerprint, tid: "../other" })
+      .setProtectedHeader({ alg: "dir", enc: "A256GCM" })
+      .setIssuedAt(Math.floor(now.getTime() / 1000))
+      .setExpirationTime("1h")
+      .encrypt(key);
+    expect(await decodeSession(bad, { key, fingerprint, now })).toBeNull();
   });
 
   it("rejects well-formed tokens without the session's claims", async () => {

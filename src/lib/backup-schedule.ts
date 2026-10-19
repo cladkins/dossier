@@ -7,6 +7,7 @@ import { backupsDir, listBackups, writeBackup } from "@/lib/backups";
 import { env } from "@/lib/env";
 import { logServerError } from "@/lib/log";
 import { loadSettings, saveSettings } from "@/lib/settings-data";
+import { forEachTenant } from "@/lib/tenants";
 
 // Nightly backups (E10-7, SET-10): while "Nightly backups" is on, an export
 // is written at 03:00 server time, and backups older than
@@ -65,7 +66,8 @@ export function startBackupSchedule(): void {
   const schedule = () => {
     const now = new Date();
     globalForSchedule.backupTimer = setTimeout(() => {
-      void runNightlyBackup()
+      // Each user's own backup, into their own folder (see dataDir()).
+      void forEachTenant("nightly backup", () => runNightlyBackup().catch(() => {}))
         .catch(() => {})
         .finally(schedule);
     }, nextRun(now).getTime() - now.getTime());

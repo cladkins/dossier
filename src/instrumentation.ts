@@ -5,10 +5,14 @@ export async function register() {
     const { checkEnvOnStartup } = await import("@/lib/env");
     checkEnvOnStartup();
 
+    // Each signed-in user's own database, brought up to date like the main one.
+    const { forEachTenant, migrateTenants } = await import("@/lib/tenants");
+    const { logServerError } = await import("@/lib/log");
+    await migrateTenants().catch((error: unknown) => logServerError("startup", error));
+
     // AI jobs left running by the previous process can't finish (E6-7).
     const { recoverInterruptedJobs } = await import("@/lib/jobs/runner");
-    const { logServerError } = await import("@/lib/log");
-    await recoverInterruptedJobs().catch((error: unknown) => logServerError("startup", error));
+    await forEachTenant("startup", () => recoverInterruptedJobs()).catch((error: unknown) => logServerError("startup", error));
 
     // Finished jobs, with what they were given and wrote, are deleted after a while.
     const { startJobSweep } = await import("@/lib/jobs/retention");

@@ -8,12 +8,14 @@ import { loadAiConfig } from "@/lib/ai/config";
 import { AiError } from "@/lib/ai/errors";
 import { logServerError } from "@/lib/log";
 import { prisma } from "@/lib/prisma";
+import { currentTenant, runWithTenant } from "@/lib/tenant";
 
 // Long AI tasks run as background jobs (E6-7): the request that starts one
 // returns at once with its id, the work goes on in this process, and the
 // page follows its named steps (/api/jobs/[id]/events). Progress lives in
 // the Job table, so a reloaded page can pick the job up again. Dossier runs
-// as a single instance, so an in-process queue is enough.
+// as a single instance, so an in-process queue is enough. The queue is shared
+// by every user; each job remembers whose it is and runs in their database.
 
 export type JobContext = {
   /** Names the step now in progress, e.g. "Reading the posting". */
@@ -58,6 +60,8 @@ type Listener = (job: JobView) => void;
 type RunnerState = {
   definitions: Map<string, JobDefinition<unknown, unknown>>;
   queue: string[];
+  /** Whose database each queued or running job is in (see src/lib/tenant.ts). */
+  tenants: Map<string, string>;
   running: Map<string, AbortController>;
   listeners: Map<string, Set<Listener>>;
   pumping: boolean;
@@ -68,10 +72,13 @@ const globalForJobs = globalThis as unknown as { jobRunner?: RunnerState };
 const state: RunnerState = (globalForJobs.jobRunner ??= {
   definitions: new Map(),
   queue: [],
+  tenants: new Map(),
   running: new Map(),
   listeners: new Map(),
   pumping: false,
 });
+// A runner kept across a dev reload from before tenants were tracked.
+state.tenants ??= new Map();
 
 /** Registers a job type; call at module level where the job is defined. */
 export function defineJob<I, R>(definition: JobDefinition<I, R>): JobDefinition<I, R> {
@@ -140,9 +147,13 @@ export async function retryJob(id: string): Promise<boolean> {
 
 /** Stops a queued or running job; it ends as failed with "Cancelled.". */
 export async function cancelJob(id: string): Promise<void> {
+  // Only the user whose job it is can stop it.
+  const owner = state.tenants.get(id);
+  if (owner !== undefined && owner !== currentTenant()) return;
   const queued = state.queue.indexOf(id);
   if (queued >= 0) {
     state.queue.splice(queued, 1);
+    state.tenants.delete(id);
     await finish(id, { status: JobStatus.FAILED, error: JOB_MESSAGES.cancelled });
     return;
   }
@@ -186,6 +197,7 @@ async function finish(
 }
 
 function enqueue(id: string): void {
+  state.tenants.set(id, currentTenant());
   if (!state.queue.includes(id)) state.queue.push(id);
   void pump();
 }
@@ -207,8 +219,10 @@ async function pump(): Promise<void> {
       const id = state.queue.shift()!;
       const controller = new AbortController();
       state.running.set(id, controller);
-      void execute(id, controller).finally(() => {
+      const tenant = state.tenants.get(id) ?? currentTenant();
+      void runWithTenant(tenant, () => execute(id, controller)).finally(() => {
         state.running.delete(id);
+        state.tenants.delete(id);
         void pump();
       });
     }

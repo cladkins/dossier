@@ -14,6 +14,10 @@ const OPEN_ROUTES = new Set([
   // Google's redirect comes from Google's site, so route()'s same-origin check
   // would refuse it; it checks the session and its signed state itself (E15-1).
   "src/app/api/google/callback/route.ts",
+  // Signing in with OIDC (Authentik): nobody has a session yet. The callback
+  // comes from the provider's site and checks its own signed state.
+  "src/app/api/auth/login/route.ts",
+  "src/app/api/auth/callback/route.ts",
 ]);
 
 const sources = globSync("src/**/*.{ts,tsx}").filter((file) => !/\.test\.tsx?$/.test(file) && !file.startsWith("src/generated/"));

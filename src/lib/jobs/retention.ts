@@ -4,6 +4,7 @@ import { JobStatus } from "@/generated/prisma/enums";
 import { logServerError } from "@/lib/log";
 import { prisma } from "@/lib/prisma";
 import { loadSettings } from "@/lib/settings-data";
+import { forEachTenant } from "@/lib/tenants";
 
 import { removeOldZips } from "./zip-pdfs";
 
@@ -34,10 +35,10 @@ export async function sweepFinishedJobs(now = new Date(), hours?: number): Promi
 
 const globalForSweep = globalThis as unknown as { jobSweepTimer?: ReturnType<typeof setInterval> };
 
-/** Sweeps now and every 15 minutes, once per process (dev reloads keep the timer they have). */
+/** Sweeps every user's jobs now and every 15 minutes, once per process (dev reloads keep the timer they have). */
 export function startJobSweep(): void {
   if (globalForSweep.jobSweepTimer) return;
-  const sweep = () => void sweepFinishedJobs().catch((error: unknown) => logServerError("job sweep", error));
+  const sweep = () => void forEachTenant("job sweep", () => sweepFinishedJobs()).catch((error: unknown) => logServerError("job sweep", error));
   globalForSweep.jobSweepTimer = setInterval(sweep, EVERY_MS);
   // Don't keep the process alive just for this.
   globalForSweep.jobSweepTimer.unref?.();

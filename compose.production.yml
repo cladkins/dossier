@@ -1,8 +1,8 @@
 # Dossier with Docker Compose (see "Self-hosting" in the README). Save this
 # file as compose.yml in a folder of its own, put POSTGRES_PASSWORD,
-# DOSSIER_PASSWORD (a hash of your password, from `docker run --rm -it
-# ghcr.io/aientech/dossier hash-password`) and DOSSIER_SECRET in a .env file
-# next to it, then:
+# DOSSIER_SECRET and either DOSSIER_PASSWORD (a hash of your password, from
+# `docker run --rm -it ghcr.io/aientech/dossier hash-password`) or the
+# DOSSIER_OIDC_* settings for Authentik in a .env file next to it, then:
 #
 #   docker compose up -d
 #
@@ -33,8 +33,19 @@ services:
         condition: service_healthy
     environment:
       DATABASE_URL: postgresql://dossier:${POSTGRES_PASSWORD}@db:5432/dossier
-      DOSSIER_PASSWORD: ${DOSSIER_PASSWORD:?Set DOSSIER_PASSWORD in .env to a hash from hash-password}
+      # Password sign-in: a hash from hash-password. Not needed with Authentik.
+      DOSSIER_PASSWORD: ${DOSSIER_PASSWORD:-}
       DOSSIER_SECRET: ${DOSSIER_SECRET:?Set DOSSIER_SECRET in .env}
+      # Sign-in with Authentik: each person gets their own profile (see
+      # "Signing in with Authentik" in the README).
+      DOSSIER_AUTH: ${DOSSIER_AUTH:-}
+      DOSSIER_OIDC_ISSUER: ${DOSSIER_OIDC_ISSUER:-}
+      DOSSIER_OIDC_CLIENT_ID: ${DOSSIER_OIDC_CLIENT_ID:-}
+      DOSSIER_OIDC_CLIENT_SECRET: ${DOSSIER_OIDC_CLIENT_SECRET:-}
+      DOSSIER_OIDC_ALLOWED_GROUPS: ${DOSSIER_OIDC_ALLOWED_GROUPS:-}
+      DOSSIER_OIDC_OWNER: ${DOSSIER_OIDC_OWNER:-}
+      DOSSIER_OIDC_NAME: ${DOSSIER_OIDC_NAME:-}
+      DOSSIER_ALLOW_INSECURE_LOGIN: ${DOSSIER_ALLOW_INSECURE_LOGIN:-}
       DOSSIER_BACKUP_RETENTION_DAYS: ${DOSSIER_BACKUP_RETENTION_DAYS:-}
       # Your time zone, e.g. Europe/Berlin: nightly backups run at 03:00 in it.
       TZ: ${TZ:-}
@@ -54,11 +65,12 @@ services:
       # Gmail and Calendar: a Google OAuth client (or enter it in Settings → Google).
       DOSSIER_GOOGLE_CLIENT_ID: ${DOSSIER_GOOGLE_CLIENT_ID:-}
       DOSSIER_GOOGLE_CLIENT_SECRET: ${DOSSIER_GOOGLE_CLIENT_SECRET:-}
-      # The address Dossier is reached at, for Google's redirect.
+      # The address Dossier is reached at, for Google's and Authentik's redirects.
       DOSSIER_PUBLIC_URL: ${DOSSIER_PUBLIC_URL:-}
     # Only on the server itself: put a reverse proxy with HTTPS in front.
     ports:
-      - "127.0.0.1:${DOSSIER_PORT:-3000}:3000"
+      # 38470 rather than the common 3000; the app still listens on 3000 inside.
+      - "127.0.0.1:${DOSSIER_PORT:-38470}:3000"
     volumes:
       - data:/data
     # Room for Chromium, which prints the PDFs.

@@ -4,15 +4,15 @@ import { mkdir, readdir, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { buildExport } from "@/lib/data-export";
-import { env } from "@/lib/env";
 import { prisma } from "@/lib/prisma";
+import { dataDir } from "@/lib/tenant";
 
 // Backups (E10-6, E10-7): exports written to DOSSIER_DATA_DIR/backups. They
 // never hold the API key in plain text.
 
 export type BackupReason = "before-import" | "nightly";
 
-export const backupsDir = () => path.join(env.DOSSIER_DATA_DIR, "backups");
+export const backupsDir = () => path.join(dataDir(), "backups");
 
 const pad = (value: number) => String(value).padStart(2, "0");
 

@@ -4,6 +4,13 @@
 # with a non-zero exit code, so CapRover and Docker don't switch over to it.
 set -eu
 
+# DATABASE_URL may come from a file (a Docker secret); Prisma's CLI reads the
+# variable itself, so read the file for it.
+if [ -z "${DATABASE_URL:-}" ] && [ -n "${DATABASE_URL_FILE:-}" ]; then
+  DATABASE_URL="$(cat "$DATABASE_URL_FILE")"
+  export DATABASE_URL
+fi
+
 cd /app/tools
 if ! node node_modules/prisma/build/index.js migrate deploy; then
   echo "Dossier didn't start: applying the database migrations failed (see the error above). See \"A migration failed\" in the README's troubleshooting section." >&2

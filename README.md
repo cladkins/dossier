@@ -136,15 +136,15 @@ docker compose up -d
 docker compose logs -f app
 ```
 
-On every start, Dossier applies the database migrations and loads its built-in themes before it serves, and the log shows each step. Press Ctrl+C to stop following it. `curl -s localhost:3000/api/health` answers `{"status":"ok", …}` once it's up.
+On every start, Dossier applies the database migrations and loads its built-in themes before it serves, and the log shows each step. Press Ctrl+C to stop following it. `curl -s localhost:38470/api/health` answers `{"status":"ok", …}` once it's up.
 
-**HTTPS.** Dossier only listens on the server itself (`127.0.0.1:3000`), so put a reverse proxy with HTTPS in front of it. [Caddy](https://caddyserver.com) gets and renews the certificate on its own. Install it (on older releases, see [Caddy's install guide](https://caddyserver.com/docs/install)) and replace its default configuration with your domain:
+**HTTPS.** Dossier only listens on the server itself (`127.0.0.1:38470`), so put a reverse proxy with HTTPS in front of it. [Caddy](https://caddyserver.com) gets and renews the certificate on its own. Install it (on older releases, see [Caddy's install guide](https://caddyserver.com/docs/install)) and replace its default configuration with your domain:
 
 ```bash
 sudo apt install -y caddy
 sudo tee /etc/caddy/Caddyfile > /dev/null <<'EOF'
 dossier.example.com {
-    reverse_proxy localhost:3000
+    reverse_proxy localhost:38470
 }
 EOF
 sudo systemctl reload caddy
@@ -155,8 +155,8 @@ Open `https://dossier.example.com` and sign in. Then pick an AI model in **Setti
 <details>
 <summary>Another proxy, or no HTTPS at home</summary>
 
-- **Traefik, nginx or another proxy:** it has to set `X-Forwarded-Proto` and append the client's address to `X-Forwarded-For`. Caddy and Traefik do both by default; with nginx, add `proxy_set_header X-Forwarded-Proto $scheme;` and `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;`, and raise `client_max_body_size` to `12m` so imports of up to 10 MB get through. Dossier relies on these headers: `X-Forwarded-Proto: https` makes the session cookie `Secure`, and the last address in `X-Forwarded-For` is the client the sign-in rate limit counts. So never expose port 3000 itself to the internet: requests that skip the proxy could set those headers themselves.
-- **A home network without a domain:** change the app's `ports` entry in `compose.yml` to `"3000:3000"`, run `docker compose up -d`, and open `http://<the server's address>:3000`. Everything works, but the session cookie can't be marked `Secure`.
+- **Traefik, nginx or another proxy:** it has to set `X-Forwarded-Proto` and append the client's address to `X-Forwarded-For`. Caddy and Traefik do both by default; with nginx, add `proxy_set_header X-Forwarded-Proto $scheme;` and `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;`, and raise `client_max_body_size` to `12m` so imports of up to 10 MB get through. Dossier relies on these headers: `X-Forwarded-Proto: https` makes the session cookie `Secure`, and the last address in `X-Forwarded-For` is the client the sign-in rate limit counts. So never expose port 38470 itself to the internet: requests that skip the proxy could set those headers themselves.
+- **A home network without a domain:** change the app's `ports` entry in `compose.yml` to `"38470:3000"`, run `docker compose up -d`, and open `http://<the server's address>:38470`. The session cookie can't be marked `Secure`, and password sign-in is refused over plain HTTP from another machine unless you set `DOSSIER_ALLOW_INSECURE_LOGIN=true` (your password then crosses the network readable). Signing in with Authentik over HTTPS avoids both.
 
 </details>
 
@@ -169,7 +169,7 @@ Dossier is configured with environment variables; everything else is set in the 
 | Variable | What it's for |
 |---|---|
 | `POSTGRES_PASSWORD` | The database's password. `compose.yml` builds the app's `DATABASE_URL` from it. |
-| `DOSSIER_PASSWORD` | A hash of the password you sign in with, made with `hash-password` (see [step 4](#4-set-up-the-app)); the password itself isn't accepted. It's only read from here, never stored. Changing it signs every session out. |
+| `DOSSIER_PASSWORD` | With password sign-in only: a hash of the password you sign in with, made with `hash-password` (see [step 4](#4-set-up-the-app)); the password itself isn't accepted. It's only read from here, never stored. Changing it signs every session out. Not needed when you [sign in with Authentik](#signing-in-with-authentik-multi-user). |
 | `DOSSIER_SECRET` | At least 32 random characters. Signs sessions and encrypts saved API keys; changing it signs everyone out, and API keys have to be entered again. |
 
 **Optional:**
@@ -190,11 +190,52 @@ Dossier is configured with environment variables; everything else is set in the 
 | `DOSSIER_ADZUNA_APP_ID`, `DOSSIER_ADZUNA_KEY` | none | Adzuna's app ID and key. |
 | `DOSSIER_GOOGLE_CLIENT_ID`, `DOSSIER_GOOGLE_CLIENT_SECRET` | none | A Google OAuth client, for Gmail and Calendar (see [Connecting Gmail and Calendar](#connecting-gmail-and-calendar)). A client saved in Settings → Google wins. |
 | `DOSSIER_PUBLIC_URL` | the address in use | The address Dossier is reached at, e.g. `https://dossier.example.com`, for Google's redirect after you sign in. Only needed when your proxy doesn't pass on the host and protocol. |
+| `DOSSIER_AUTH` | `oidc` when `DOSSIER_OIDC_ISSUER` is set, else `password` | How people sign in: `password` (one shared password, one profile) or `oidc` (each person signs in with Authentik or another OpenID Connect provider and gets a profile of their own). |
+| `DOSSIER_OIDC_ISSUER`, `DOSSIER_OIDC_CLIENT_ID`, `DOSSIER_OIDC_CLIENT_SECRET` | none | The OpenID Connect provider and client (see [Signing in with Authentik](#signing-in-with-authentik-multi-user)). |
+| `DOSSIER_OIDC_ALLOWED_GROUPS` | anyone | Comma-separated groups; only their members may sign in. |
+| `DOSSIER_OIDC_OWNER` | none | The user name (or `sub`) of the person who keeps the data from before multi-user sign-in. |
+| `DOSSIER_OIDC_NAME` | `Authentik` | The name on the sign-in button. |
+| `DOSSIER_ALLOW_INSECURE_LOGIN` | `false` | `true` allows password sign-in over plain HTTP from other machines. Off by default: the password would cross the network readable. |
+| `<NAME>_FILE` | none | Reads a secret from a file instead, e.g. `DOSSIER_SECRET_FILE=/run/secrets/dossier_secret`. Works for `DATABASE_URL`, `DOSSIER_SECRET`, `DOSSIER_PASSWORD`, `DOSSIER_OIDC_CLIENT_SECRET`, `DOSSIER_AI_KEY`, `DOSSIER_JSEARCH_KEY`, `DOSSIER_ADZUNA_KEY` and `DOSSIER_GOOGLE_CLIENT_SECRET`. A file keeps the value out of `docker inspect`. |
 | `DOSSIER_IMAGE` | `ghcr.io/aientech/dossier:latest` | The image to run. Set a version, e.g. `ghcr.io/aientech/dossier:v1.4.1`, to upgrade only when you choose. |
-| `DOSSIER_PORT` | `3000` | The port on the server (`127.0.0.1`) that Dossier listens on, for the reverse proxy. |
+| `DOSSIER_PORT` | `38470` | The port on the server (`127.0.0.1`) that Dossier listens on, for the reverse proxy. |
 | `COMPOSE_PROFILES` | none | `ai` runs Ollama as well (see [Local model with Ollama](#local-model-with-ollama)). |
 
 Running the image without the Compose file? Set `DATABASE_URL` (`postgresql://user:password@host:5432/database`) instead of `POSTGRES_PASSWORD`, and mount a volume at `/data`, where nightly backups and zipped PDFs go.
+
+## Signing in with Authentik (multi-user)
+
+With an OpenID Connect provider such as [Authentik](https://goauthentik.io), each person signs in with their own account and gets their own profile, applications, settings, Google connection, backups and AI tasks. Dossier never sees their passwords.
+
+Each person's data lives in a database of their own on the same Postgres server, named after the main one (`dossier_u…`). Dossier creates it the first time that person signs in and brings it up to date on every start. The Postgres user in `DATABASE_URL` needs the right to create databases; the one `compose.yml` sets up has it.
+
+1. **In Authentik**, go to **Applications → Providers → Create → OAuth2/OpenID Provider**:
+   - **Client type:** Confidential.
+   - **Redirect URIs:** `https://dossier.example.com/api/auth/callback` (strict), with your address.
+   - **Scopes:** keep `openid`, `email` and `profile`. Authentik's `profile` scope includes the `groups` claim.
+   - **Subject mode:** keep the default (hashed user ID). Changing it later gives everyone a new, empty profile.
+2. **Create an application** for the provider (**Applications → Applications → Create**) with the slug `dossier`. Bind a group to it (for example `family`) under **Policy / Group / User Bindings**, so only that group can open it.
+3. **In `.env`:**
+
+   ```sh
+   DOSSIER_OIDC_ISSUER=https://auth.example.com/application/o/dossier/
+   DOSSIER_OIDC_CLIENT_ID=<Client ID from the provider>
+   DOSSIER_OIDC_CLIENT_SECRET=<Client Secret from the provider>
+   DOSSIER_PUBLIC_URL=https://dossier.example.com
+   # Optional: also checked by Dossier itself.
+   DOSSIER_OIDC_ALLOWED_GROUPS=family
+   # Optional: your Authentik user name. You keep the profile and applications
+   # you had with password sign-in; everyone else starts empty.
+   DOSSIER_OIDC_OWNER=chris
+   ```
+
+   `DOSSIER_PASSWORD` is no longer needed; remove it. Then run `docker compose up -d`.
+
+The sign-in page sends people straight to Authentik, which signs them back in without a prompt while their Authentik session lasts. Dossier's own session lasts 24 hours or until the browser closes. **Sign out** ends it in Dossier only; signing out of Authentik as well is done in Authentik.
+
+Shared between everyone: the server's environment variables (`DOSSIER_AI_*`, job source keys, the Google OAuth client). Each person can override them in their own Settings. A person's backups and zipped PDFs go to `/data/users/<id>/`; the owner's stay in `/data`.
+
+To remove someone, take them out of the group in Authentik. Their data stays in their database until you drop it (`DROP DATABASE "dossier_u…"`).
 
 ## Choosing an AI provider
 

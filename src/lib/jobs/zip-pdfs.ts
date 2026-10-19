@@ -8,17 +8,17 @@ import { zipSync, type Zippable } from "fflate";
 import { z } from "zod";
 
 import { DocumentKind } from "@/generated/prisma/enums";
-import { env } from "@/lib/env";
 import { resolveFileName } from "@/lib/file-name";
 import { renderPdf } from "@/lib/pdf/render";
 import { prisma } from "@/lib/prisma";
+import { dataDir } from "@/lib/tenant";
 import { loadProfileName } from "@/lib/profile-data";
 import { loadSettings } from "@/lib/settings-data";
 
 import { defineJob } from "./runner";
 
 /** Where finished zips wait to be downloaded, in DOSSIER_DATA_DIR. */
-export const downloadsDir = () => path.join(env.DOSSIER_DATA_DIR, "downloads");
+export const downloadsDir = () => path.join(dataDir(), "downloads");
 
 /** Zips nobody downloaded are removed after this long. */
 const KEEP_MS = 60 * 60 * 1000;
