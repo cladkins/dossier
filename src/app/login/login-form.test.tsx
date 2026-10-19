@@ -29,6 +29,11 @@ describe("LoginForm", () => {
     expect(screen.getByRole("checkbox", { name: "Keep me signed in for 30 days" })).not.toBeChecked();
   });
 
+  it("posts the form, so the password never lands in a URL if scripts haven't loaded", () => {
+    render(<LoginForm />);
+    expect(screen.getByLabelText("Password").closest("form")).toHaveAttribute("method", "post");
+  });
+
   it("shows and hides the password", async () => {
     const user = userEvent.setup();
     render(<LoginForm />);

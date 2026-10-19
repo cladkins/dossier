@@ -41,7 +41,12 @@ export function LoginForm({ next }: { next?: string }) {
   }
 
   return (
+    // POST, not the default GET: if the page's scripts haven't loaded (a slow
+    // network, or the dev server blocking them for another host), the browser
+    // submits the form itself, and a GET would put the password in the URL,
+    // where browser history and every log along the way keep it.
     <form
+      method="post"
       onSubmit={submit}
       noValidate
       className="flex flex-col gap-5"
