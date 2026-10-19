@@ -1,8 +1,8 @@
 // Seeds the database. Run on every start (see Dockerfile), and by hand with:
 //
-//   docker/bin/yarn prisma db seed                        built-in themes
-//   docker/bin/yarn prisma db seed -- --demo              plus the prototype's sample data
-//   docker/bin/yarn prisma db seed -- --demo --reset      replacing an existing profile and applications
+//   yarn prisma db seed                        built-in themes
+//   yarn prisma db seed -- --demo              plus the prototype's sample data
+//   yarn prisma db seed -- --demo --reset      replacing an existing profile and applications
 
 import { PrismaPg } from "@prisma/adapter-pg";
 

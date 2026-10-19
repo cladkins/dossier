@@ -7,14 +7,21 @@ import { Pool } from "pg";
 // own port, with its own database and a fake AI server, so a run never
 // touches development data.
 
+/** Where the specs open Dossier: the fake Authentik proxy (e2e/fake-authentik.mts) in front of the app. */
 export const APP_PORT = 3100;
+/** The app itself, which only the fake Authentik and the PDF renderer talk to directly. */
+export const SERVER_PORT = 3101;
 export const FAKE_AI_PORT = 3999;
 export const FAKE_JOBS_PORT = 3998;
 export const FAKE_GOOGLE_PORT = 3997;
-export const PASSWORD = "e2e-password";
-/** DOSSIER_PASSWORD for the run: `printf 'e2e-password' | yarn hash-password`. */
-const PASSWORD_HASH = "argon2id:m=19456,t=2,p=1:wk-0a22NLDwpNVDMxLY9rw:x4bAXEh9EtlaTIqLiHwF_omyDOpcPtwPrV0_SJx_y2c";
-export const STORAGE_STATE = "e2e/.auth/state.json";
+/** The owner's Authentik user name for the run (DOSSIER_OWNER). */
+const OWNER = "e2e";
+/** What the fake Authentik adds to every request: the specs run as the owner. */
+export const AUTHENTIK_HEADERS = {
+  "X-authentik-uid": "e2e-owner-uid",
+  "X-authentik-username": OWNER,
+  "X-authentik-name": "E2E Owner",
+};
 
 /**
  * DATABASE_URL with "_e2e" added to the database name (or E2E_DATABASE_URL).
@@ -36,7 +43,7 @@ export function e2eDatabaseUrl(): string {
 export function appEnv(): Record<string, string> {
   return {
     DATABASE_URL: e2eDatabaseUrl(),
-    DOSSIER_PASSWORD: PASSWORD_HASH,
+    DOSSIER_OWNER: OWNER,
     DOSSIER_SECRET: "e2e-secret-e2e-secret-e2e-secret-e2e",
     DOSSIER_DATA_DIR: "/tmp/dossier-e2e",
     DOSSIER_AI_PROVIDER: "openai",
@@ -54,7 +61,7 @@ export function appEnv(): Record<string, string> {
     DOSSIER_UPDATES_TEST_BASE_URL: `http://localhost:${FAKE_JOBS_PORT}/github`,
     // A production server, so it would send the usage ping.
     DOSSIER_TELEMETRY: "off",
-    PORT: String(APP_PORT),
+    PORT: String(SERVER_PORT),
   };
 }
 

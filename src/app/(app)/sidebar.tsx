@@ -2,7 +2,6 @@ import { LogOut, Plus } from "lucide-react";
 import Link from "next/link";
 
 import { BrandMark } from "@/components/brand-mark";
-import { signOut } from "@/lib/auth/actions";
 import type { Release } from "@/lib/releases";
 import type { ColorScheme } from "@/lib/ui-preferences";
 
@@ -89,16 +88,15 @@ export function Sidebar({
           <span className="truncate text-xs font-medium">{userName}</span>
           <span className="truncate text-[11px] text-muted">Self-hosted · v{currentVersion}</span>
         </span>
-        <form action={signOut}>
-          <button
-            type="submit"
-            aria-label="Sign out"
-            title="Sign out"
-            className="grid size-[26px] place-items-center rounded-control text-muted hover:bg-hover hover:text-ink"
-          >
-            <LogOut size={15} aria-hidden="true" />
-          </button>
-        </form>
+        {/* Authentik's sign-out page: Authentik signs people in, so it signs them out. */}
+        <a
+          href="/outpost.goauthentik.io/sign_out"
+          aria-label="Sign out"
+          title="Sign out"
+          className="grid size-[26px] place-items-center rounded-control text-muted hover:bg-hover hover:text-ink"
+        >
+          <LogOut size={15} aria-hidden="true" />
+        </a>
       </div>
     </SidebarFrame>
   );

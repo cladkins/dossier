@@ -6,8 +6,6 @@ import { currentTenant } from "@/lib/tenant";
 
 import { ensureTenant, forEachTenant, listTenants, migrateTenants } from "./tenants";
 
-const mode = vi.hoisted(() => ({ value: "oidc" }));
-vi.mock("@/lib/auth/mode", () => ({ authMode: () => mode.value }));
 vi.mock("@/lib/log", () => ({ logServerError: vi.fn() }));
 vi.mock("@/lib/prisma", () => ({
   systemPrisma: { $queryRaw: vi.fn(), $executeRawUnsafe: vi.fn() },
@@ -29,7 +27,6 @@ const kim = "uaaaaaaaaaaaaaaaaaaaa";
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mode.value = "oidc";
   commands.calls = [];
   commands.fail = false;
   vi.mocked(systemPrisma.$executeRawUnsafe).mockResolvedValue(0 as never);
@@ -59,11 +56,21 @@ describe("ensureTenant", () => {
     expect(commands.calls).toEqual([]);
   });
 
-  it("drops a half set-up database, so the next sign-in starts over", async () => {
+  it("remembers a database it set up, without asking Postgres again", async () => {
+    databasesExist();
+    await ensureTenant(sam);
+    expect(systemPrisma.$queryRaw).not.toHaveBeenCalled();
+  });
+
+  it("drops a half set-up database, so the next visit starts over", async () => {
+    const lee = "ubbbbbbbbbbbbbbbbbbbb";
     databasesExist("dossier");
     commands.fail = true;
-    await expect(ensureTenant(sam)).rejects.toThrow(/Setting up the database/);
-    expect(systemPrisma.$executeRawUnsafe).toHaveBeenLastCalledWith(`DROP DATABASE IF EXISTS "dossier_${sam}" WITH (FORCE)`);
+    await expect(ensureTenant(lee)).rejects.toThrow(/Setting up the database/);
+    expect(systemPrisma.$executeRawUnsafe).toHaveBeenLastCalledWith(`DROP DATABASE IF EXISTS "dossier_${lee}" WITH (FORCE)`);
+    commands.fail = false;
+    await ensureTenant(lee);
+    expect(systemPrisma.$executeRawUnsafe).toHaveBeenLastCalledWith(`CREATE DATABASE "dossier_${lee}"`);
   });
 
   it("refuses anything that isn't a tenant id", async () => {
@@ -76,12 +83,6 @@ describe("listTenants", () => {
   it("is the default tenant, then each user's database by its name", async () => {
     databasesExist("dossier", `dossier_${kim}`, `dossier_${sam}`, "dossier_test", "other_u0123456789abcdef0123", "dossier_default");
     expect(await listTenants()).toEqual(["default", sam, kim]);
-  });
-
-  it("is only the default tenant with password sign-in", async () => {
-    mode.value = "password";
-    expect(await listTenants()).toEqual(["default"]);
-    expect(systemPrisma.$queryRaw).not.toHaveBeenCalled();
   });
 });
 

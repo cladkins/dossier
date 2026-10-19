@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 
-import { connectFakeGoogle, forgetGoogle, inFakeCalendar, sql } from "./support";
+import { connectFakeGoogle, forgetGoogle, inFakeCalendar, resetData, sql } from "./support";
 
 // The README's screenshots (see playwright.readme.config.ts): each screen as the
 // demo data shows it, 1440×900 at 2×, saved over .github/images/*.png.
@@ -24,6 +24,9 @@ async function shot(page: Page, name: string): Promise<void> {
   await page.waitForLoadState("networkidle");
   await page.screenshot({ path: `${IMAGES}/${name}.png` });
 }
+
+// The demo data, which the screenshots show.
+test.beforeAll(resetData);
 
 test("the dashboard", async ({ page }) => {
   await page.goto("/");

@@ -13,7 +13,7 @@ import {
   verifyTenantHeader,
 } from "./tenant";
 
-const env = vi.hoisted(() => ({ DOSSIER_SECRET: "t".repeat(32), DOSSIER_AUTH: "oidc", DOSSIER_DATA_DIR: "/data" }));
+const env = vi.hoisted(() => ({ DOSSIER_SECRET: "t".repeat(32), DOSSIER_DATA_DIR: "/data" }));
 vi.mock("@/lib/env", () => ({ env }));
 
 const key = deriveKey("tenant-header", "t".repeat(32));
@@ -53,20 +53,14 @@ describe("tenant header", () => {
 });
 
 describe("currentTenant", () => {
-  it("is the default tenant with password sign-in", () => {
-    env.DOSSIER_AUTH = "password";
-    expect(currentTenant()).toBe(DEFAULT_TENANT);
-    env.DOSSIER_AUTH = "oidc";
-  });
-
-  it("with OIDC, is whoever runWithTenant() names, across awaits", async () => {
+  it("is whoever runWithTenant() names, across awaits", async () => {
     await runWithTenant("u0123456789abcdef0123", async () => {
       await new Promise((resolve) => setTimeout(resolve, 1));
       expect(currentTenant()).toBe("u0123456789abcdef0123");
     });
   });
 
-  it("with OIDC, throws rather than guess when nobody is signed in", () => {
+  it("throws rather than guess when nobody is signed in", () => {
     expect(() => currentTenant()).toThrow(NoTenantError);
     expect(() => runWithTenant("nope", () => 1)).toThrow();
   });

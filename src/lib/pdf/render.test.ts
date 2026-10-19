@@ -46,6 +46,11 @@ const fake = vi.hoisted(() => {
   return { state, launch };
 });
 
+// One user: the owner's database.
+vi.mock("@/lib/tenant", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/tenant")>()),
+  currentTenant: () => "default",
+}));
 vi.mock("playwright-core", () => ({ chromium: { launch: fake.launch } }));
 vi.mock("@/lib/env", () => ({ env: { DOSSIER_SECRET: "a".repeat(32) } }));
 

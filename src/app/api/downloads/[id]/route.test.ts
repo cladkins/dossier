@@ -10,6 +10,12 @@ import { getJob } from "@/lib/jobs/runner";
 
 import { GET } from "./route";
 
+// One user, the owner, whose files are in DOSSIER_DATA_DIR itself.
+vi.mock("@/lib/tenant", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/tenant")>()),
+  currentTenant: () => "default",
+  dataDir: () => dataDir.path,
+}));
 vi.mock("@/lib/auth/session", () => ({ getSession: vi.fn() }));
 vi.mock("@/lib/prisma", () => ({ prisma: {} }));
 vi.mock("@/lib/jobs/runner", () => ({ getJob: vi.fn(), defineJob: <T,>(definition: T) => definition }));
@@ -23,7 +29,7 @@ beforeEach(async () => {
   dataDir.path = await mkdtemp(path.join(tmpdir(), "dossier-downloads-"));
   await mkdir(path.join(dataDir.path, "downloads"));
   await writeFile(path.join(dataDir.path, "downloads", "abc-123.zip"), "PK zip");
-  vi.mocked(getSession).mockResolvedValue({ persistent: false, tenant: "default", issuedAt: new Date(), expiresAt: new Date() });
+  vi.mocked(getSession).mockResolvedValue({ tenant: "default" });
   vi.mocked(getJob).mockResolvedValue(done);
 });
 

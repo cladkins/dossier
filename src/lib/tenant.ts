@@ -6,21 +6,20 @@ import path from "node:path";
 
 import { workUnitAsyncStorage } from "next/dist/server/app-render/work-unit-async-storage.external";
 
-import { authMode } from "@/lib/auth/mode";
 import { env } from "@/lib/env";
 import { deriveKey } from "@/lib/keys";
 
-// Every person who signs in with OIDC gets a tenant: a database of their own
-// (see tenantDatabaseUrl() in prisma.ts), so profiles, applications, settings
-// and Google accounts never mix. In password mode there is only the default
-// tenant, the database in DATABASE_URL.
+// Every person who signs in through Authentik gets a tenant: a database of
+// their own (see tenantDatabaseUrl() in prisma.ts), so profiles,
+// applications, settings and Google accounts never mix. The default tenant is
+// the database in DATABASE_URL, which the owner (DOSSIER_OWNER) keeps.
 //
 // Code reads the database through `prisma`, which asks currentTenant() which
 // database to use. That comes from, in order:
 //
 // 1. runWithTenant(), for background work (job runner, nightly backups,
-//    inbox checks) and for sign-in, before the session cookie exists.
-// 2. The request: proxy.ts reads the session and sets TENANT_HEADER on the
+//    inbox checks).
+// 2. The request: proxy.ts reads who Authentik signed in and sets TENANT_HEADER on the
 //    request, signed with a key derived from DOSSIER_SECRET. A browser can't
 //    forge it, and proxy.ts removes any copy the browser sends.
 //
@@ -28,6 +27,8 @@ import { deriveKey } from "@/lib/keys";
 
 export const DEFAULT_TENANT = "default";
 export const TENANT_HEADER = "x-dossier-tenant";
+/** The signed-in person's name, which proxy.ts passes on with the tenant. */
+export const USER_NAME_HEADER = "x-dossier-user-name";
 
 const TENANT_ID = /^(?:default|u[0-9a-f]{20})$/;
 
@@ -37,7 +38,7 @@ export function isTenantId(id: unknown): id is string {
 }
 
 /**
- * The tenant for an OIDC user: a hash of the issuer and the `sub` claim, which
+ * The tenant for a user: a hash of where the id comes from and the id, which
  * the provider never changes or reuses, unlike user names and email addresses.
  */
 export function tenantForSubject(issuer: string, subject: string): string {
@@ -92,7 +93,6 @@ function requestTenant(): string | null {
 
 /** Whose database to use now. Throws NoTenantError when nobody is signed in. */
 export function currentTenant(): string {
-  if (authMode() === "password") return DEFAULT_TENANT;
   const tenant = storage.getStore() ?? requestTenant();
   if (!tenant) throw new NoTenantError();
   return tenant;

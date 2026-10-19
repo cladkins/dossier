@@ -5,12 +5,11 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { promisify } from "node:util";
 
-import { authMode } from "@/lib/auth/mode";
 import { logServerError } from "@/lib/log";
 import { prismaFor, systemPrisma, tenantDatabaseName, tenantDatabaseUrl } from "@/lib/prisma";
 import { DEFAULT_TENANT, isTenantId, runWithTenant } from "@/lib/tenant";
 
-// Each OIDC user's database is created the first time they sign in, with the
+// Each user's database is created the first time they sign in, with the
 // same migrations and built-in themes as the main one. On every start the
 // server brings all of them up to date (migrateTenants()), the way start.sh
 // does for the main database.
@@ -52,11 +51,14 @@ async function databaseExists(name: string): Promise<boolean> {
 
 const globalForTenants = globalThis as unknown as { tenantSetups?: Map<string, Promise<void>> };
 const setups = (globalForTenants.tenantSetups ??= new Map());
+const globalForReady = globalThis as unknown as { tenantsReady?: Set<string> };
+/** Tenants whose database is known to exist, so a request needn't ask Postgres. */
+const ready = (globalForReady.tenantsReady ??= new Set());
 
-/** Creates a tenant's database on first sign-in; does nothing when it exists. */
+/** Creates a tenant's database on their first visit; does nothing when it exists. */
 export function ensureTenant(tenant: string): Promise<void> {
   if (!isTenantId(tenant)) return Promise.reject(new Error("Not a tenant id."));
-  if (tenant === DEFAULT_TENANT) return Promise.resolve();
+  if (tenant === DEFAULT_TENANT || ready.has(tenant)) return Promise.resolve();
   let setup = setups.get(tenant);
   if (!setup) {
     setup = (async () => {
@@ -68,20 +70,21 @@ export function ensureTenant(tenant: string): Promise<void> {
       try {
         await migrate(tenant);
       } catch (error) {
-        // Half set up: drop it, so the next sign-in starts over.
+        // Half set up: drop it, so the next visit starts over.
         await prismaFor(tenant).$disconnect().catch(() => {});
         await systemPrisma.$executeRawUnsafe(`DROP DATABASE IF EXISTS ${quoteIdent(name)} WITH (FORCE)`).catch(() => {});
         throw error;
       }
-    })().finally(() => setups.delete(tenant));
+    })()
+      .then(() => void ready.add(tenant))
+      .finally(() => setups.delete(tenant));
     setups.set(tenant, setup);
   }
   return setup;
 }
 
-/** Every tenant with a database: the default one, then each OIDC user's. */
+/** Every tenant with a database: the default one, then each user's. */
 export async function listTenants(): Promise<string[]> {
-  if (authMode() === "password") return [DEFAULT_TENANT];
   const prefix = `${tenantDatabaseName(DEFAULT_TENANT)}_`;
   const rows = await systemPrisma.$queryRaw<{ datname: string }[]>`SELECT datname FROM pg_database WHERE NOT datistemplate`;
   const others = rows
@@ -93,7 +96,7 @@ export async function listTenants(): Promise<string[]> {
   return [DEFAULT_TENANT, ...others];
 }
 
-/** Brings every OIDC user's database up to date; called once at startup. */
+/** Brings every user's database up to date; called once at startup. */
 export async function migrateTenants(): Promise<void> {
   for (const tenant of await listTenants()) {
     if (tenant === DEFAULT_TENANT) continue;
