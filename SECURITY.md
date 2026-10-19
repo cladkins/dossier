@@ -33,7 +33,7 @@ So the worst a hostile posting or mail can do is get odd wording into its own dr
 ## Running it safely
 
 - **Use HTTPS.** Put Dossier behind a reverse proxy that ends TLS (Caddy, Traefik, nginx). Set `Strict-Transport-Security` there. Dossier adds `upgrade-insecure-requests` to its policy when the proxy says the request came over HTTPS (`X-Forwarded-Proto`).
-- **Don't expose port 3000 directly.** Rate limiting trusts the last `X-Forwarded-For` entry, which is only the real client behind a proxy.
+- **Don't expose Dossier's port (38470 by default) directly.** Rate limiting trusts the last `X-Forwarded-For` entry, which is only the real client behind a proxy.
 - **Keep secrets out of `docker inspect`.** Every secret also reads from a file: `DOSSIER_SECRET_FILE`, `DATABASE_URL_FILE`, `DOSSIER_OIDC_CLIENT_SECRET_FILE` and so on, for Docker secrets.
 - **Pick a long `DOSSIER_SECRET`** and keep it with your backups: without it, saved API keys can't be read. Changing it or the password signs out every session.
 - **Keep it updated.** Settings → About tells you when a new version is out.

@@ -136,15 +136,15 @@ docker compose up -d
 docker compose logs -f app
 ```
 
-On every start, Dossier applies the database migrations and loads its built-in themes before it serves, and the log shows each step. Press Ctrl+C to stop following it. `curl -s localhost:3000/api/health` answers `{"status":"ok", …}` once it's up.
+On every start, Dossier applies the database migrations and loads its built-in themes before it serves, and the log shows each step. Press Ctrl+C to stop following it. `curl -s localhost:38470/api/health` answers `{"status":"ok", …}` once it's up.
 
-**HTTPS.** Dossier only listens on the server itself (`127.0.0.1:3000`), so put a reverse proxy with HTTPS in front of it. [Caddy](https://caddyserver.com) gets and renews the certificate on its own. Install it (on older releases, see [Caddy's install guide](https://caddyserver.com/docs/install)) and replace its default configuration with your domain:
+**HTTPS.** Dossier only listens on the server itself (`127.0.0.1:38470`), so put a reverse proxy with HTTPS in front of it. [Caddy](https://caddyserver.com) gets and renews the certificate on its own. Install it (on older releases, see [Caddy's install guide](https://caddyserver.com/docs/install)) and replace its default configuration with your domain:
 
 ```bash
 sudo apt install -y caddy
 sudo tee /etc/caddy/Caddyfile > /dev/null <<'EOF'
 dossier.example.com {
-    reverse_proxy localhost:3000
+    reverse_proxy localhost:38470
 }
 EOF
 sudo systemctl reload caddy
@@ -155,8 +155,8 @@ Open `https://dossier.example.com` and sign in. Then pick an AI model in **Setti
 <details>
 <summary>Another proxy, or no HTTPS at home</summary>
 
-- **Traefik, nginx or another proxy:** it has to set `X-Forwarded-Proto` and append the client's address to `X-Forwarded-For`. Caddy and Traefik do both by default; with nginx, add `proxy_set_header X-Forwarded-Proto $scheme;` and `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;`, and raise `client_max_body_size` to `12m` so imports of up to 10 MB get through. Dossier relies on these headers: `X-Forwarded-Proto: https` makes the session cookie `Secure`, and the last address in `X-Forwarded-For` is the client the sign-in rate limit counts. So never expose port 3000 itself to the internet: requests that skip the proxy could set those headers themselves.
-- **A home network without a domain:** change the app's `ports` entry in `compose.yml` to `"3000:3000"`, run `docker compose up -d`, and open `http://<the server's address>:3000`. Everything works, but the session cookie can't be marked `Secure`.
+- **Traefik, nginx or another proxy:** it has to set `X-Forwarded-Proto` and append the client's address to `X-Forwarded-For`. Caddy and Traefik do both by default; with nginx, add `proxy_set_header X-Forwarded-Proto $scheme;` and `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;`, and raise `client_max_body_size` to `12m` so imports of up to 10 MB get through. Dossier relies on these headers: `X-Forwarded-Proto: https` makes the session cookie `Secure`, and the last address in `X-Forwarded-For` is the client the sign-in rate limit counts. So never expose port 38470 itself to the internet: requests that skip the proxy could set those headers themselves.
+- **A home network without a domain:** change the app's `ports` entry in `compose.yml` to `"38470:3000"`, run `docker compose up -d`, and open `http://<the server's address>:38470`. The session cookie can't be marked `Secure`, and password sign-in is refused over plain HTTP from another machine unless you set `DOSSIER_ALLOW_INSECURE_LOGIN=true` (your password then crosses the network readable). Signing in with Authentik over HTTPS avoids both.
 
 </details>
 
@@ -198,7 +198,7 @@ Dossier is configured with environment variables; everything else is set in the 
 | `DOSSIER_ALLOW_INSECURE_LOGIN` | `false` | `true` allows password sign-in over plain HTTP from other machines. Off by default: the password would cross the network readable. |
 | `<NAME>_FILE` | none | Reads a secret from a file instead, e.g. `DOSSIER_SECRET_FILE=/run/secrets/dossier_secret`. Works for `DATABASE_URL`, `DOSSIER_SECRET`, `DOSSIER_PASSWORD`, `DOSSIER_OIDC_CLIENT_SECRET`, `DOSSIER_AI_KEY`, `DOSSIER_JSEARCH_KEY`, `DOSSIER_ADZUNA_KEY` and `DOSSIER_GOOGLE_CLIENT_SECRET`. A file keeps the value out of `docker inspect`. |
 | `DOSSIER_IMAGE` | `ghcr.io/aientech/dossier:latest` | The image to run. Set a version, e.g. `ghcr.io/aientech/dossier:v1.4.1`, to upgrade only when you choose. |
-| `DOSSIER_PORT` | `3000` | The port on the server (`127.0.0.1`) that Dossier listens on, for the reverse proxy. |
+| `DOSSIER_PORT` | `38470` | The port on the server (`127.0.0.1`) that Dossier listens on, for the reverse proxy. |
 | `COMPOSE_PROFILES` | none | `ai` runs Ollama as well (see [Local model with Ollama](#local-model-with-ollama)). |
 
 Running the image without the Compose file? Set `DATABASE_URL` (`postgresql://user:password@host:5432/database`) instead of `POSTGRES_PASSWORD`, and mount a volume at `/data`, where nightly backups and zipped PDFs go.

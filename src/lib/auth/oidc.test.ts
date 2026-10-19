@@ -5,7 +5,7 @@ import { beforeAll, describe, expect, it, vi } from "vitest";
 import { deriveKey } from "@/lib/keys";
 import { DEFAULT_TENANT, tenantForSubject } from "@/lib/tenant";
 
-import { authorizationUrl, finishSignIn, isAllowed, newAttempt, OidcError, type OidcProvider, openAttempt, sealAttempt, tenantFor } from "./oidc";
+import { authorizationUrl, discover, finishSignIn, isAllowed, newAttempt, OidcError, type OidcProvider, openAttempt, sealAttempt, tenantFor } from "./oidc";
 
 vi.mock("@/lib/env", () => ({ env: { DOSSIER_SECRET: "o".repeat(32), DOSSIER_OIDC_ALLOWED_GROUPS: [] } }));
 
@@ -42,6 +42,26 @@ function idToken(claims: Record<string, unknown>, { aud = "dossier", iss = issue
 function tokenEndpoint(token: string | Promise<string>, status = 200) {
   return vi.fn<typeof fetch>(async () => new Response(JSON.stringify({ id_token: await token, access_token: "a" }), { status }));
 }
+
+describe("discover", () => {
+  const document = { ...provider, end_session_endpoint: "https://auth.example.com/end/" };
+
+  it("reads the provider's discovery document once", async () => {
+    const fetchImpl = vi.fn<typeof fetch>(async () => Response.json(document));
+    const issuerUrl = "https://once.example.com/application/o/dossier/";
+    expect(await discover(issuerUrl, fetchImpl)).toEqual(document);
+    expect(await discover(issuerUrl, fetchImpl)).toEqual(document);
+    expect(fetchImpl).toHaveBeenCalledExactlyOnceWith("https://once.example.com/application/o/dossier/.well-known/openid-configuration", expect.anything());
+  });
+
+  it("tries again after a failure instead of keeping it", async () => {
+    const issuerUrl = "https://flaky.example.com/";
+    const failing = vi.fn<typeof fetch>(async () => new Response("down", { status: 502 }));
+    await expect(discover(issuerUrl, failing)).rejects.toThrow(/502/);
+    const working = vi.fn<typeof fetch>(async () => Response.json(document));
+    expect(await discover(issuerUrl, working)).toEqual(document);
+  });
+});
 
 describe("sign-in attempts", () => {
   it("round-trip through the encrypted cookie, and nothing else does", async () => {
