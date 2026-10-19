@@ -1,57 +1,36 @@
 # Developing Dossier
 
-Next.js 16 (App Router) + Prisma 7 + PostgreSQL 18, run with Docker Compose and Yarn 4. Nothing runs on the host: every command goes through the containers. For installing and running Dossier, see the [README](README.md); for how it's secured, [SECURITY.md](SECURITY.md).
+Next.js 16 (App Router) + Prisma 7 + PostgreSQL 18, with Node 24 and Yarn 4 (`corepack enable`). `compose.yml` is for running Dossier, not for developing it; develop on the host. For installing and running Dossier, see the [README](README.md); for how it's secured, [SECURITY.md](SECURITY.md).
 
 ## Getting started
 
 ```bash
+docker run -d --name dossier-db -p 127.0.0.1:5432:5432 -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=dossier postgres:18-alpine
 cp .env.example .env
-docker compose build
-docker/bin/yarn hash-password   # set DOSSIER_PASSWORD in .env to what it prints
-# set DOSSIER_SECRET (openssl rand -base64 32) in .env
-docker compose up
+# in .env: DOSSIER_SECRET (openssl rand -base64 32), DOSSIER_OWNER=me and DOSSIER_DEV_USER=me
+yarn install
+yarn prisma migrate deploy && yarn prisma db seed
+yarn dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000). Source is bind-mounted, so edits hot-reload.
+Open [http://localhost:3000](http://localhost:3000). Authentik signs people in, in front of Dossier; in development, `DOSSIER_DEV_USER` stands in for it: requests without Authentik's headers count as that user (see [Sign-in](#sign-in)). With `DOSSIER_DEV_USER` equal to `DOSSIER_OWNER`, you use the main database.
 
-`.env.example` documents every variable. The server refuses to start while `DOSSIER_PASSWORD` or `DOSSIER_SECRET` is missing, `DOSSIER_PASSWORD` isn't a password hash, or the secret is shorter than 32 characters, and logs which variable to fix.
+`.env.example` documents every variable. The server refuses to start while `DOSSIER_SECRET` or `DATABASE_URL` is missing or the secret is shorter than 32 characters, and logs which variable to fix.
 Server code reads configuration from the validated `env` object instead of `process.env`:
 
 ```ts
 import { env } from "@/lib/env";
 ```
 
-On every start the `app` container runs `prisma generate`, `prisma migrate deploy`, then `next dev`.
-Postgres is also exposed on `localhost:5432` for host tools, using `DATABASE_URL` from `.env`.
-
-## Yarn
-
-Dependencies live in the container (a named `node_modules` volume), not on the host.
-Run yarn through `docker/bin/yarn`, which uses the running `app` container or, if it's stopped, a one-off one:
-
-```bash
-docker/bin/yarn add <package>
-docker/bin/yarn install   # after pulling changes to yarn.lock
-docker/bin/yarn lint
-```
-
 ## Database
 
-Define models in `prisma/schema.prisma`, then create and apply a migration:
+Define models in `prisma/schema.prisma`, then create and apply a migration, and restart `yarn dev`:
 
 ```bash
-docker/bin/yarn prisma migrate dev --name <migration-name>
-docker compose restart app
+yarn prisma migrate dev --name <migration-name>
 ```
 
-The restart regenerates the Prisma Client and picks it up; since Prisma 7, `migrate dev` no longer runs `prisma generate` on its own.
-
-To browse and edit rows in Prisma Studio, start it on demand (plain `docker compose up` leaves it off) and open [http://localhost:5555](http://localhost:5555):
-
-```bash
-docker compose up -d studio
-docker compose stop studio   # when you're done
-```
+Since Prisma 7, `migrate dev` no longer runs `prisma generate` on its own; `yarn prisma generate` does. To browse and edit rows, `yarn prisma studio`.
 
 Query the database from server code with the shared client:
 
@@ -67,8 +46,8 @@ Change an application's status only through `setStatus` in `src/lib/status-actio
 Each start runs `prisma db seed`, which creates the six built-in themes, an empty profile and default settings. It never overwrites your profile or settings. To load the prototype's sample data (Jane Doe and nine applications):
 
 ```bash
-docker/bin/yarn prisma db seed -- --demo           # refuses if you already have a profile or applications
-docker/bin/yarn prisma db seed -- --demo --reset   # deletes your profile and applications first
+yarn prisma db seed -- --demo           # refuses if you already have a profile or applications
+yarn prisma db seed -- --demo --reset   # deletes your profile and applications first
 ```
 
 ## Mutations and private routes
@@ -123,23 +102,15 @@ Both get the session from `getSession()` in `src/lib/auth/session.ts` (see [Sign
 
 ## Sign-in
 
-Dossier has one user and no accounts: you sign in with the password that `DOSSIER_PASSWORD` is a hash of. The session is an encrypted token (JWE, keyed from `DOSSIER_SECRET`) in an HttpOnly, SameSite=Lax cookie, so nothing is stored on the server. It lasts until the browser closes, but at most 24 hours; with "Keep me signed in", 30 days.
+Dossier has no sign-in of its own. [Authentik](https://goauthentik.io)'s proxy signs people in, in front of it, and adds `X-authentik-uid`, `X-authentik-username` and `X-authentik-name` to every request it lets through. `src/proxy.ts` reads them (`src/lib/auth/proxy-user.ts`), so Dossier must only be reachable through that proxy: `compose.yml` publishes it on `127.0.0.1` only. A request without them goes to `/login`, which only explains this; API routes answer 401. **Sign out** links to Authentik's `/outpost.goauthentik.io/sign_out`.
 
-The hash is argon2id with OWASP's settings (19 MiB, 2 passes, 1 lane) from Node's own `crypto.argon2`, made by `docker/bin/yarn hash-password` (`scripts/hash-password.ts`, which the image bundles as the `hash-password` command). Checking a password against it is in `src/lib/auth/password-hash.ts`, and `src/lib/env.ts` refuses anything that isn't a hash. It's written as `argon2id:m=19456,t=2,p=1:<salt>:<hash>` rather than the usual `$argon2id$v=19$…`, because Next.js and Docker Compose expand `$` in `.env` files, even inside quotes. The settings are part of each hash, so stronger ones can come later without breaking existing hashes.
+Each person is a tenant with a database of their own (`src/lib/tenant.ts`, `src/lib/tenants.ts`): `DATABASE_URL`'s database for the owner (`DOSSIER_OWNER`, an Authentik user name), `<name>_u<20 hex digits>` for everyone else, from a hash of their `X-authentik-uid`. `src/proxy.ts` creates the database on a person's first visit; every start migrates them all.
 
-Sign out from the sidebar ends the session in that browser. To sign out everywhere, set `DOSSIER_PASSWORD` to a new hash (even of the same password, since each has its own salt) or rotate `DOSSIER_SECRET` and restart: every session carries a fingerprint of the password and is encrypted with a key from the secret, so all existing sessions stop working. Rotating the secret also means API keys saved in Settings have to be entered again, since they're encrypted with it too.
+Code keeps using `prisma`: it picks the current tenant's client on every access. In a request that's the tenant `src/proxy.ts` put on the request in `x-dossier-tenant`, signed with a key derived from `DOSSIER_SECRET` (any copy the browser sends is dropped); background work (the job runner, nightly backups, the inbox check, `after()` callbacks) runs inside `runWithTenant()`. Without either, `currentTenant()` throws rather than guess. What belongs to the server rather than a person (the health check) uses `systemPrisma`. Files go under `dataDir()`.
 
-In server code, `getSession()` returns the session or null, and `verifySession()` (for pages and layouts) sends the visitor to `/login` when there is none. `action()` and `route()` already check it.
+In server code, `getSession()` returns the person (their tenant and name) or null, and `verifySession()` (for pages and layouts) sends the visitor to `/login` when there is none. `action()` and `route()` already check it.
 
-Failed sign-ins are rate-limited in Postgres: after 5 failures within a minute from one IP, attempts are refused for 30 seconds, then 60, 120 and so on up to 15 minutes. The IP is the last `X-Forwarded-For` entry, which is the real client behind a reverse proxy but can be faked when the app is exposed directly, so 30 failures within 10 minutes from all IPs together also trigger the backoff. If you lock yourself out while developing, clear the counters with `docker compose exec db psql -U postgres -d dossier -c 'DELETE FROM "LoginThrottle"'`.
-
-### Several users (OIDC)
-
-With `DOSSIER_AUTH=oidc` (on when `DOSSIER_OIDC_ISSUER` is set), people sign in through an OpenID Connect provider such as Authentik: `/api/auth/login` starts the authorization code flow with PKCE, and `/api/auth/callback` checks the state cookie and the ID token (`src/lib/auth/oidc.ts`). Each user is a tenant with a database of their own (`src/lib/tenant.ts`, `src/lib/tenants.ts`): `DATABASE_URL`'s database for the default tenant, `<name>_u<20 hex digits>` for everyone else, created on first sign-in and migrated on every start.
-
-Code keeps using `prisma`: it picks the current tenant's client on every access. In a request that's the tenant `src/proxy.ts` put on the request in `x-dossier-tenant`, signed with a key from `DOSSIER_SECRET`; background work (the job runner, nightly backups, the inbox check, `after()` callbacks) runs inside `runWithTenant()`. Without either, `currentTenant()` throws rather than guess. Things that belong to the server, not a user (sign-in rate limits, the health check), use `systemPrisma`. Files go under `dataDir()`.
-
-With password sign-in there is only the default tenant, so nothing changes.
+In development, `DOSSIER_DEV_USER` stands in for Authentik: requests without its headers count as that user name. Production servers ignore it. The database tests run as the owner (`src/test/single-user.ts`); the end-to-end tests send Authentik's headers for the owner (`e2e/support.ts`).
 
 ## AI provider
 
@@ -150,16 +121,16 @@ Long AI tasks run as background jobs (`src/lib/jobs`): the page follows their na
 To try the AI features without a hosted provider, run a small model in Docker:
 
 ```bash
-docker compose up -d ollama
-docker compose exec ollama ollama pull qwen2.5:3b   # about 2 GB
+docker run -d --name ollama -p 127.0.0.1:11434:11434 -v ollama:/root/.ollama ollama/ollama:0.34.4
+docker exec ollama ollama pull qwen2.5:3b   # about 2 GB
 ```
 
-Then pick Local model in Settings with the address `http://ollama:11434` (inside Docker, `localhost` is the app's own container). The Ollama image takes about 9 GB of disk, and a 3B model about 3 GB of memory while it runs; `docker compose stop ollama` when you're done.
+Then pick Local model in Settings with the address `http://localhost:11434`. The Ollama image takes about 9 GB of disk, and a 3B model about 3 GB of memory while it runs; `docker stop ollama` when you're done.
 
 The tests use a mock provider. To check the providers and prompts against real models, run the live tests, which are skipped otherwise:
 
 ```bash
-docker compose exec -e AI_LIVE=ollama app yarn vitest run src/lib/ai/providers.live.test.ts src/lib/ai/tasks/tasks.live.test.ts
+AI_LIVE=ollama yarn vitest run src/lib/ai/providers.live.test.ts src/lib/ai/tasks/tasks.live.test.ts
 ```
 
 ## Job search
@@ -174,9 +145,9 @@ Find jobs (`/jobs`) searches the job source chosen in Settings → Job search: J
 The tests use answers in each source's shape (`src/test/job-search-fixtures.ts`). The live tests check the real services, and are skipped otherwise. JSearch and Adzuna spend searches from your plan; the Arbeitsagentur is free:
 
 ```bash
-docker compose exec -e JOBS_LIVE=jsearch -e JSEARCH_TEST_KEY=… app yarn vitest run src/lib/job-search/jsearch.live.test.ts
-docker compose exec -e JOBS_LIVE=arbeitsagentur app yarn vitest run src/lib/job-search/sources.live.test.ts
-docker compose exec -e JOBS_LIVE=adzuna -e ADZUNA_TEST_APP_ID=… -e ADZUNA_TEST_KEY=… app yarn vitest run src/lib/job-search/sources.live.test.ts
+JOBS_LIVE=jsearch JSEARCH_TEST_KEY=… yarn vitest run src/lib/job-search/jsearch.live.test.ts
+JOBS_LIVE=arbeitsagentur yarn vitest run src/lib/job-search/sources.live.test.ts
+JOBS_LIVE=adzuna ADZUNA_TEST_APP_ID=… ADZUNA_TEST_KEY=… yarn vitest run src/lib/job-search/sources.live.test.ts
 ```
 
 ## Your data
@@ -197,14 +168,14 @@ The receiving end is a Cloudflare Worker that isn't published with the app. Chan
 
 ## Tests and checks
 
-Tests use [Vitest](https://vitest.dev) and run inside the container like everything else:
+Tests use [Vitest](https://vitest.dev):
 
 ```bash
-docker/bin/yarn test          # run all tests once
-docker/bin/yarn test:watch    # re-run tests on change
-docker/bin/yarn test:coverage # run once with coverage (report in coverage/index.html)
-docker/bin/yarn lint
-docker/bin/yarn typecheck     # generates Next.js route types, then runs tsc
+yarn test          # run all tests once
+yarn test:watch    # re-run tests on change
+yarn test:coverage # run once with coverage (report in coverage/index.html)
+yarn lint
+yarn typecheck     # generates Next.js route types, then runs tsc
 ```
 
 Put tests next to the code they cover. `*.test.ts` files run in Node (server code, pure logic);
@@ -216,21 +187,21 @@ GitHub Actions (`.github/workflows/ci.yml`) runs lint, type-check and tests with
 
 ### End-to-end tests
 
-[Playwright](https://playwright.dev) tests in `e2e/` click through the main flows in headless Chromium: signing in, the profile, the theme builder and PDFs, finding a job and applying from it, a new application, refining and undoing, the application email, the board and table, the dashboard, and export, delete and import. `e2e/accessibility.spec.ts` runs [axe](https://github.com/dequelabs/axe-core) on every screen and its open menus and dialogs (no serious or critical WCAG 2.2 AA violations allowed) and checks where keyboard focus goes. They run against a production build, on the standalone server the image uses, so build first:
+[Playwright](https://playwright.dev) tests in `e2e/` click through the main flows in headless Chromium: the profile, the theme builder and PDFs, finding a job and applying from it, a new application, refining and undoing, the application email, the board and table, the dashboard, and export, delete and import. `e2e/accessibility.spec.ts` runs [axe](https://github.com/dequelabs/axe-core) on every screen and its open menus and dialogs (no serious or critical WCAG 2.2 AA violations allowed) and checks where keyboard focus goes. They run against a production build, on the standalone server the image uses, so build first:
 
 ```bash
-docker/bin/yarn build && docker/bin/yarn test:e2e
+yarn build && yarn test:e2e
 ```
 
 The run starts its own server on port 3100 with a separate `dossier_e2e` database (created and migrated on the way, reset to the demo data before the specs that change data), a fake OpenAI-compatible server on port 3999 (`e2e/fake-ai.mts`) that answers each AI task with plausible output, fake job sources on port 3998 (`e2e/fake-jobs.mts`), which the app reaches through `DOSSIER_JOBS_TEST_BASE_URL`, a variable for the tests only, and a fake Google on port 3997 (`e2e/fake-google.mts`) for sign-in, Gmail and Calendar (`DOSSIER_GOOGLE_TEST_BASE_URL`), which only comes into play once a spec enters an OAuth client in Settings → Google. The daily update check asks the same fake instead of GitHub (`DOSSIER_UPDATES_TEST_BASE_URL`), which says no release is out, so a spec can store the latest release itself. Your development server and data are never touched: the tests refuse any database whose name doesn't end in `_e2e`. CI runs them in a job of their own and keeps the report of a failed run as an artifact.
 
 ## The production image
 
-The `Dockerfile`'s last stage is the production image (the `dev` stage is what Compose runs here). It holds the standalone Next.js server, Playwright's Chromium for PDFs, and Prisma's CLI for migrations, runs as `node`, and starts with `docker/start.sh`: `prisma migrate deploy`, the seed (compiled with esbuild at build time), then the server. To build and try it next to the development stack:
+The `Dockerfile`'s last stage is the production image, which `compose.yml` runs. It holds the standalone Next.js server, Playwright's Chromium for PDFs, and Prisma's CLI for migrations, runs as `node`, and starts with `docker/start.sh`: `prisma migrate deploy`, the seed (compiled with esbuild at build time), then the server. To build and try it:
 
 ```bash
 docker build -t dossier:local .
-DOSSIER_IMAGE=dossier:local DOSSIER_PORT=3300 docker compose -f compose.production.yml -p dossier-local up -d
+DOSSIER_IMAGE=dossier:local DOSSIER_PORT=3300 docker compose -p dossier-local up -d
 ```
 
 CI pushes an image for every commit on `main` to `ghcr.io/<owner>/<repository>:<sha>` (lower case), once the checks and the end-to-end tests pass, on `main` or in the commit's pull request. A version tag (`v1.0.0`) then tags that commit's image with the version and `latest`.
@@ -238,5 +209,5 @@ CI pushes an image for every commit on `main` to `ghcr.io/<owner>/<repository>:<
 ## Reset
 
 ```bash
-docker compose down -v   # stops everything and deletes the database and node_modules volumes
+docker rm -f dossier-db   # deletes the development database; start again from Getting started
 ```

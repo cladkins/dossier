@@ -1,5 +1,5 @@
 // Dossier's data model (PRD §9). After editing, run
-// `docker/bin/yarn prisma migrate dev --name <name>` and `docker compose restart app`.
+// `yarn prisma migrate dev --name <name>` and `yarn prisma generate`.
 //
 // Conventions:
 // - The profile's basics and the settings are key-value tables (ProfileField,
@@ -605,23 +605,6 @@ model EmailMessage {
   @@index([threadId])
   @@index([applicationId, sentAt])
   @@index([sentAt])
-}
-
-// ─── Sign-in (E3-4) ──────────────────────────────────────────────────────────
-
-/// Failed sign-in attempts, for rate limiting (AUTH-5): one row per client IP,
-/// plus the key "*" counting attempts from all IPs together.
-model LoginThrottle {
-  /// The client IP, or "*" for the global counter.
-  key          String    @id
-  failures     Int       @default(0)
-  /// When the current run of failures started.
-  windowStart  DateTime
-  /// Attempts are refused until then.
-  blockedUntil DateTime?
-  updatedAt    DateTime  @updatedAt
-
-  @@index([updatedAt])
 }
 
 // ─── Background jobs (E6-7) ──────────────────────────────────────────────────

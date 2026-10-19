@@ -1,171 +1,40 @@
 import "server-only";
 
-import { createHmac } from "node:crypto";
-
-import { EncryptJWT, jwtDecrypt } from "jose";
-import { cookies, headers } from "next/headers";
+import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { cache } from "react";
 
-import { authMode } from "@/lib/auth/mode";
-import { verifyPassword } from "@/lib/auth/password-hash";
-import { env } from "@/lib/env";
-import { deriveKey } from "@/lib/keys";
-import { DEFAULT_TENANT, isTenantId } from "@/lib/tenant";
+import { TENANT_HEADER, USER_NAME_HEADER, verifyTenantHeader } from "@/lib/tenant";
 
-// Sessions are stateless: the cookie holds an encrypted token (JWE,
-// A256GCM with a key derived from DOSSIER_SECRET), so nothing is stored on
-// the server, and tampering or a different secret makes it invalid. Each
-// token also carries a fingerprint of DOSSIER_PASSWORD (the password's
-// hash), so changing the password and restarting signs everyone out (AUTH-6).
-// With OIDC sign-in it carries a fingerprint of the provider and client
-// instead, and the tenant: whose database the session reads.
+// Dossier doesn't sign anyone in itself: Authentik's proxy does, in front of
+// it, and passes on who it is (see src/lib/auth/proxy-user.ts). src/proxy.ts
+// turns that into the tenant, whose database the request reads, and marks
+// the request with it, signed. A session is just that mark.
 
-export const SESSION_COOKIE = "dossier_session";
-
-const HOUR = 60 * 60;
-/** How long a sign-in lasts: 24 hours for a browser session (decision in #27), 30 days with "Keep me signed in". */
-export const SESSION_LIFETIME = { browser: 24 * HOUR, persistent: 30 * 24 * HOUR } as const;
-
-/** A signed-in session. */
+/** Who the request is for. */
 export type Session = {
-  /** Signed in with "Keep me signed in". */
-  persistent: boolean;
-  /** Whose data this session reads (see src/lib/tenant.ts). */
+  /** Whose data this request reads (see src/lib/tenant.ts). */
   tenant: string;
-  /** The person's name from the OIDC provider; absent with password sign-in. */
+  /** The person's name, as Authentik knows it. */
   name?: string;
-  issuedAt: Date;
-  expiresAt: Date;
 };
 
-type TokenOptions = {
-  key: Uint8Array;
-  /** passwordFingerprint() of the current DOSSIER_PASSWORD. */
-  fingerprint: string;
-  now?: Date;
-};
-
-/**
- * A short HMAC of DOSSIER_PASSWORD, keyed from DOSSIER_SECRET. It identifies
- * the password a session was created with, without revealing it.
- */
-export function passwordFingerprint(
-  password: string,
-  key = deriveKey("password-fingerprint"),
-): string {
-  return createHmac("sha256", key).update(password, "utf8").digest("base64url").slice(0, 16);
-}
-
-/**
- * What sessions are bound to: the password with password sign-in, the
- * provider and client with OIDC. Changing either and restarting signs
- * everyone out.
- */
-export function authFingerprint(): string {
-  if (authMode() === "oidc") {
-    return passwordFingerprint(`oidc\n${env.DOSSIER_OIDC_ISSUER}\n${env.DOSSIER_OIDC_CLIENT_ID}`);
-  }
-  return passwordFingerprint(env.DOSSIER_PASSWORD ?? "");
-}
-
-/** The key and fingerprint that sessions are created and checked with. */
-export function sessionTokenOptions(): TokenOptions {
-  return { key: deriveKey("session"), fingerprint: authFingerprint() };
-}
-
-type SessionClaims = { persistent: boolean; tenant?: string; name?: string };
-
-const seconds = (date: Date) => Math.floor(date.getTime() / 1000);
-
-/** Creates the encrypted session token. */
-export async function encodeSession(
-  { persistent, tenant = DEFAULT_TENANT, name }: SessionClaims,
-  { key, fingerprint, now = new Date() }: TokenOptions,
-): Promise<string> {
-  const issuedAt = seconds(now);
-  return new EncryptJWT({ persistent, pwd: fingerprint, tid: tenant, ...(name ? { name } : {}) })
-    .setProtectedHeader({ alg: "dir", enc: "A256GCM" })
-    .setIssuedAt(issuedAt)
-    .setExpirationTime(issuedAt + SESSION_LIFETIME[persistent ? "persistent" : "browser"])
-    .encrypt(key);
-}
-
-/**
- * Reads a session token; null when it's missing, tampered with, expired, made
- * with another key, or made while a different password was set.
- */
-export async function decodeSession(
-  token: string | undefined,
-  { key, fingerprint, now = new Date() }: TokenOptions,
-): Promise<Session | null> {
-  if (!token) return null;
-  try {
-    const { payload } = await jwtDecrypt(token, key, {
-      currentDate: now,
-      keyManagementAlgorithms: ["dir"],
-      contentEncryptionAlgorithms: ["A256GCM"],
-      requiredClaims: ["iat", "exp"],
-    });
-    if (typeof payload.persistent !== "boolean" || payload.pwd !== fingerprint) return null;
-    // Sessions from before multi-user sign-in have no tenant: the default one.
-    const tenant = payload.tid ?? DEFAULT_TENANT;
-    if (!isTenantId(tenant)) return null;
-    return {
-      persistent: payload.persistent,
-      tenant,
-      ...(typeof payload.name === "string" && payload.name ? { name: payload.name } : {}),
-      issuedAt: new Date(payload.iat! * 1000),
-      expiresAt: new Date(payload.exp! * 1000),
-    };
-  } catch {
-    return null;
-  }
-}
-
-/** Whether `candidate` is the password that DOSSIER_PASSWORD is a hash of. */
-export function passwordMatches(candidate: string, hash = env.DOSSIER_PASSWORD): Promise<boolean> {
-  return hash ? verifyPassword(candidate, hash) : Promise.resolve(false);
-}
-
-/** Whether the browser reached us over HTTPS, as the reverse proxy reports it. */
-export async function isHttps(): Promise<boolean> {
-  const proto = (await headers()).get("x-forwarded-proto");
-  return proto?.split(",")[0]?.trim() === "https";
-}
-
-/** Signs the user in: sets the session cookie. Call from a Server Action or route handler. */
-export async function startSession(claims: SessionClaims): Promise<void> {
-  const { persistent } = claims;
-  const token = await encodeSession(claims, sessionTokenOptions());
-  (await cookies()).set(SESSION_COOKIE, token, {
-    httpOnly: true,
-    sameSite: "lax",
-    path: "/",
-    secure: await isHttps(),
-    // Without maxAge it's a browser-session cookie; the token expires anyway.
-    ...(persistent ? { maxAge: SESSION_LIFETIME.persistent } : {}),
-  });
-}
-
-/** The current session, or null when the request isn't signed in. Cached per request. */
+/** The person this request is for, or null without one. Cached per request. */
 export const getSession = cache(async (): Promise<Session | null> => {
-  const token = (await cookies()).get(SESSION_COOKIE)?.value;
-  return decodeSession(token, sessionTokenOptions());
+  const requestHeaders = await headers();
+  const tenant = verifyTenantHeader(requestHeaders.get(TENANT_HEADER));
+  if (!tenant) return null;
+  const name = requestHeaders.get(USER_NAME_HEADER)?.trim();
+  return name ? { tenant, name } : { tenant };
 });
 
 /**
- * The current session, for pages and layouts: sends the visitor to /login
- * when there is none. Proxy (src/proxy.ts) usually redirects first; this is
- * the check that counts, next to the data.
+ * The session, for pages and layouts: sends the visitor to /login, which
+ * explains how to sign in, when there is none. Proxy usually redirects first;
+ * this is the check that counts, next to the data.
  */
 export async function verifySession(): Promise<Session> {
   const session = await getSession();
   if (!session) redirect("/login");
   return session;
-}
-
-/** Signs the user out: deletes the session cookie (AUTH-7). */
-export async function endSession(): Promise<void> {
-  (await cookies()).delete(SESSION_COOKIE);
 }

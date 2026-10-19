@@ -28,7 +28,7 @@ import { appVersion } from "@/lib/version";
 // Everything a user keeps in Dossier as one JSON file (E10-4, SET-10): the
 // profile, custom themes, settings and applications with their history,
 // documents, chat and notes, and the postings kept from Find jobs (E14-9).
-// IDs are kept, so an import restores every link. Jobs, sign-in throttling,
+// IDs are kept, so an import restores every link. Jobs,
 // built-in themes, the Google account and the mail fetched from Gmail stay
 // behind: they belong to the server or the mailbox, not the user's data.
 

@@ -50,6 +50,5 @@ next-env.d.ts
 /data
 
 # end-to-end test runs
-/e2e/.auth/
 /playwright-report/
 /test-results/

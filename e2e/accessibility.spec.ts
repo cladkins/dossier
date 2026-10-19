@@ -1,7 +1,7 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type Page } from "@playwright/test";
 
-import { resetData, sql } from "./support";
+import { resetData, SERVER_PORT, sql } from "./support";
 
 // Accessibility (E11-3, PRD §11: WCAG 2.2 AA). axe finds no serious or
 // critical violations on any main screen or in its open states, and focus
@@ -87,21 +87,22 @@ test.describe("dark, with the sidebar collapsed", () => {
     }
   });
 
-  test("axe: open menus and the sign-in page", async ({ page, context, baseURL }) => {
+  test("axe: open menus", async ({ page }) => {
     await page.goto(application);
     await page.getByRole("button", { name: "More actions" }).click();
-    await expectAccessible(page);
-    await context.clearCookies({ name: "dossier_session" });
-    await context.addCookies([{ name: "dossier_theme", value: "dark", url: baseURL! }]);
-    await page.goto("/login");
     await expectAccessible(page);
   });
 });
 
-test.describe("signed out", () => {
-  test.use({ storageState: { cookies: [], origins: [] } });
+test.describe("not through Authentik", () => {
+  // The app itself, without the fake Authentik in front.
+  test.use({ baseURL: `http://localhost:${SERVER_PORT}` });
 
-  test("axe: the sign-in page", async ({ page }) => {
+  test("axe: the sign-in page, light and dark", async ({ page, context, baseURL }) => {
+    await page.goto("/");
+    await expect(page).toHaveURL(`${baseURL}/login`);
+    await expectAccessible(page);
+    await context.addCookies([{ name: "dossier_theme", value: "dark", url: baseURL! }]);
     await page.goto("/login");
     await expectAccessible(page);
   });

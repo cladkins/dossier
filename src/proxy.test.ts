@@ -1,34 +1,42 @@
 // This Next.js version still exports the matcher helper under its Middleware name.
 import { getRedirectUrl, unstable_doesMiddlewareMatch } from "next/experimental/testing/server";
 import { NextRequest } from "next/server";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { encodeSession, passwordFingerprint, SESSION_COOKIE } from "@/lib/auth/session";
 import { deriveKey } from "@/lib/keys";
 import { messages } from "@/lib/messages";
 import { PRINT_TOKEN_HEADER, signPrintToken } from "@/lib/pdf/print-token";
-import { TENANT_HEADER, verifyTenantHeader } from "@/lib/tenant";
+import { DEFAULT_TENANT, TENANT_HEADER, tenantForSubject, USER_NAME_HEADER, verifyTenantHeader } from "@/lib/tenant";
+import { ensureTenant } from "@/lib/tenants";
 
 import { config, proxy } from "./proxy";
 
-vi.mock("@/lib/env", () => ({
-  env: { DOSSIER_SECRET: "a".repeat(32), DOSSIER_PASSWORD: "correct horse" },
-}));
-
-const key = deriveKey("session", "a".repeat(32));
-const fingerprint = passwordFingerprint("correct horse", deriveKey("password-fingerprint", "a".repeat(32)));
+const env = vi.hoisted(() => ({ DOSSIER_SECRET: "a".repeat(32), DOSSIER_OWNER: "chris", DOSSIER_DEV_USER: undefined as string | undefined }));
+vi.mock("@/lib/env", () => ({ env }));
+vi.mock("@/lib/tenants", () => ({ ensureTenant: vi.fn(async () => {}) }));
+vi.mock("@/lib/log", () => ({ logServerError: vi.fn() }));
 
 const tenantKey = deriveKey("tenant-header", "a".repeat(32));
 /** The tenant the proxy passed on to the app, checked like the app checks it. */
 const passedTenant = (response: Response) => verifyTenantHeader(response.headers.get(`x-middleware-request-${TENANT_HEADER}`), tenantKey);
+const passedName = (response: Response) => response.headers.get(`x-middleware-request-${USER_NAME_HEADER}`);
 
 const matches = (url: string) => unstable_doesMiddlewareMatch({ config, nextConfig: {}, url });
 
-function request(path: string, init: { cookie?: string; headers?: Record<string, string> } = {}) {
-  const headers = new Headers(init.headers);
-  if (init.cookie) headers.set("cookie", `${SESSION_COOKIE}=${init.cookie}`);
-  return new NextRequest(`http://localhost:3000${path}`, { headers });
+/** What Authentik's proxy adds for a signed-in user. */
+const authentik = (username: string, name = username) => ({
+  "x-authentik-uid": `uid-${username}`,
+  "x-authentik-username": username,
+  "x-authentik-name": name,
+});
+const sam = authentik("sam", "Sam Doe");
+const samTenant = tenantForSubject("authentik", "uid-sam");
+
+function request(path: string, init: { headers?: Record<string, string> } = {}) {
+  return new NextRequest(`http://localhost:3000${path}`, { headers: new Headers(init.headers) });
 }
+
+beforeEach(() => vi.mocked(ensureTenant).mockClear());
 
 describe("proxy matcher", () => {
   it("runs on pages, the sign-in page and API routes", () => {
@@ -53,15 +61,53 @@ describe("proxy matcher", () => {
 });
 
 describe("proxy", () => {
-  it("lets signed-in requests through", async () => {
-    const token = await encodeSession({ persistent: false }, { key, fingerprint });
-    const response = await proxy(request("/profile", { cookie: token }));
+  it("passes on who Authentik signed in, signed, after making sure they have a database", async () => {
+    const response = await proxy(request("/profile", { headers: sam }));
     expect(response.headers.get("x-middleware-next")).toBe("1");
+    expect(passedTenant(response)).toBe(samTenant);
+    expect(passedName(response)).toBe("Sam Doe");
+    expect(ensureTenant).toHaveBeenCalledWith(samTenant);
+    expect(passedTenant(await proxy(request("/api/pdf/1", { headers: sam })))).toBe(samTenant);
+  });
+
+  it("gives the owner the original database", async () => {
+    expect(passedTenant(await proxy(request("/", { headers: authentik("Chris") })))).toBe(DEFAULT_TENANT);
+  });
+
+  it("falls back to the user name when Authentik sends no uid", async () => {
+    const response = await proxy(request("/", { headers: { "x-authentik-username": "sam" } }));
+    expect(passedTenant(response)).toBe(tenantForSubject("authentik", "sam"));
+  });
+
+  it("drops a tenant or name the browser sends itself", async () => {
+    const forged = { [TENANT_HEADER]: `${samTenant}.forged`, [USER_NAME_HEADER]: "Mallory" };
+    const response = await proxy(request("/login", { headers: forged }));
+    expect(response.headers.get(`x-middleware-request-${TENANT_HEADER}`) ?? "").toBe("");
+    expect(passedName(response) ?? "").toBe("");
+    expect(passedName(await proxy(request("/", { headers: { ...forged, ...authentik("kim") } })))).toBe("kim");
+  });
+
+  it("signs in DOSSIER_DEV_USER on the development server only", async () => {
+    env.DOSSIER_DEV_USER = "chris";
+    try {
+      expect(getRedirectUrl(await proxy(request("/")))).toContain("/login");
+      vi.stubEnv("NODE_ENV", "development");
+      expect(passedTenant(await proxy(request("/")))).toBe(DEFAULT_TENANT);
+      // Authentik's own header still wins.
+      expect(passedTenant(await proxy(request("/", { headers: sam })))).toBe(samTenant);
+    } finally {
+      vi.unstubAllEnvs();
+      env.DOSSIER_DEV_USER = undefined;
+    }
+  });
+
+  it("answers 503 when the user's database can't be set up", async () => {
+    vi.mocked(ensureTenant).mockRejectedValueOnce(new Error("no CREATEDB"));
+    expect((await proxy(request("/", { headers: sam }))).status).toBe(503);
   });
 
   it("gives pages a Content-Security-Policy with a fresh nonce, for the browser and for Next.js (E11-5)", async () => {
-    const token = await encodeSession({ persistent: false }, { key, fingerprint });
-    const first = await proxy(request("/profile", { cookie: token }));
+    const first = await proxy(request("/profile", { headers: sam }));
     const second = await proxy(request("/login"));
     const policy = first.headers.get("content-security-policy");
     expect(policy).toMatch(/script-src 'self' 'nonce-[^']+' 'strict-dynamic'/);
@@ -79,32 +125,17 @@ describe("proxy", () => {
   });
 
   it("leaves API answers without a policy", async () => {
-    const token = await encodeSession({ persistent: false }, { key, fingerprint });
-    const response = await proxy(request("/api/pdf/1", { cookie: token }));
+    const response = await proxy(request("/api/pdf/1", { headers: sam }));
     expect(response.headers.get("x-middleware-next")).toBe("1");
     expect(response.headers.get("content-security-policy")).toBeNull();
   });
 
-  it("sends signed-out visitors to /login, remembering where they were going", async () => {
-    expect(getRedirectUrl(await proxy(request("/applications/abc?tab=letter")))).toBe(
-      "http://localhost:3000/login?next=%2Fapplications%2Fabc%3Ftab%3Dletter",
-    );
-    expect(getRedirectUrl(await proxy(request("/")))).toBe("http://localhost:3000/login");
+  it("sends requests that didn't come through Authentik to /login", async () => {
+    expect(getRedirectUrl(await proxy(request("/applications/abc?tab=letter")))).toBe("http://localhost:3000/login");
+    expect(getRedirectUrl(await proxy(request("/", { headers: { "x-authentik-username": " " } })))).toBe("http://localhost:3000/login");
   });
 
-  it("treats an expired, forged or pre-password-change cookie as signed out", async () => {
-    const expired = await encodeSession(
-      { persistent: false },
-      { key, fingerprint, now: new Date(Date.now() - 25 * 60 * 60 * 1000) },
-    );
-    const forged = await encodeSession({ persistent: true }, { key: deriveKey("session", "b".repeat(32)), fingerprint });
-    const oldPassword = await encodeSession({ persistent: true }, { key, fingerprint: "stale-fingerprint" });
-    for (const cookie of [expired, forged, oldPassword, "garbage"]) {
-      expect(getRedirectUrl(await proxy(request("/profile", { cookie })))).toContain("/login");
-    }
-  });
-
-  it("answers API requests with 401 JSON instead of a redirect", async () => {
+  it("answers API requests without a user with 401 JSON instead of a redirect", async () => {
     const response = await proxy(request("/api/pdf/1"));
     expect(response.status).toBe(401);
     expect(await response.json()).toEqual({ error: messages.signedOut });
@@ -115,10 +146,11 @@ describe("proxy", () => {
     expect(response.headers.get("x-middleware-next")).toBe("1");
   });
 
-  it("lets the PDF renderer open a print page with a token for that page", async () => {
-    const token = await signPrintToken("/print/base");
+  it("lets the PDF renderer open a print page as the user its token was made for", async () => {
+    const token = await signPrintToken("/print/base", undefined, samTenant);
     const response = await proxy(request("/print/base", { headers: { [PRINT_TOKEN_HEADER]: token } }));
     expect(response.headers.get("x-middleware-next")).toBe("1");
+    expect(passedTenant(response)).toBe(samTenant);
   });
 
   it("refuses print tokens for another page, forged ones and tokens outside /print", async () => {
@@ -131,33 +163,5 @@ describe("proxy", () => {
     const profileToken = await signPrintToken("/profile");
     const response = await proxy(request("/profile", { headers: { [PRINT_TOKEN_HEADER]: profileToken } }));
     expect(getRedirectUrl(response)).toContain("/login");
-  });
-
-  it("passes the session's tenant on, signed, to pages and API routes", async () => {
-    const token = await encodeSession({ persistent: false, tenant: "u0123456789abcdef0123" }, { key, fingerprint });
-    expect(passedTenant(await proxy(request("/profile", { cookie: token })))).toBe("u0123456789abcdef0123");
-    expect(passedTenant(await proxy(request("/api/pdf/1", { cookie: token })))).toBe("u0123456789abcdef0123");
-  });
-
-  it("drops a tenant header the browser sends", async () => {
-    const forged = { [TENANT_HEADER]: "u0123456789abcdef0123.forged" };
-    const token = await encodeSession({ persistent: false }, { key, fingerprint });
-    expect(passedTenant(await proxy(request("/profile", { cookie: token, headers: forged })))).toBe("default");
-    for (const path of ["/login", "/api/auth/callback"]) {
-      const response = await proxy(request(path, { headers: forged }));
-      expect(response.headers.get(`x-middleware-request-${TENANT_HEADER}`) ?? "").toBe("");
-    }
-  });
-
-  it("lets the OIDC sign-in routes through signed out", async () => {
-    for (const path of ["/api/auth/login", "/api/auth/callback"]) {
-      expect((await proxy(request(path))).headers.get("x-middleware-next"), path).toBe("1");
-    }
-  });
-
-  it("opens a print page as the user its token was made for", async () => {
-    const token = await signPrintToken("/print/base", undefined, "u0123456789abcdef0123");
-    const response = await proxy(request("/print/base", { headers: { [PRINT_TOKEN_HEADER]: token } }));
-    expect(passedTenant(response)).toBe("u0123456789abcdef0123");
   });
 });

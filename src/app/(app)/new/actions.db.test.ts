@@ -16,7 +16,7 @@ vi.mock("@/lib/prisma", async () => {
   return { prisma: db.client };
 });
 vi.mock("@/lib/auth/session", () => ({
-  getSession: async () => ({ persistent: false, issuedAt: new Date(), expiresAt: new Date(Date.now() + 60_000) }),
+  getSession: async () => ({ tenant: "default" }),
 }));
 vi.mock("@/lib/jobs/runner", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/jobs/runner")>()),

@@ -66,6 +66,6 @@ export const prisma: PrismaClient = lazy(() => prismaFor(currentTenant()));
 
 /**
  * The database in DATABASE_URL, whoever is signed in: for what belongs to the
- * server rather than a user, such as sign-in rate limits and the health check.
+ * server rather than a user, such as the health check.
  */
 export const systemPrisma: PrismaClient = lazy(() => prismaFor(DEFAULT_TENANT));

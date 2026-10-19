@@ -1,74 +1,88 @@
+# Dossier with Docker Compose (see "Self-hosting" in the README). Put
+# POSTGRES_PASSWORD, DOSSIER_SECRET and DOSSIER_OWNER in a .env file next to
+# this file, then:
+#
+#   docker compose up -d
+#
+# Authentik signs people in, in front of Dossier (see "Signing in with
+# Authentik" in the README). Dossier trusts the user Authentik names, so it
+# only listens on this server (127.0.0.1); reach it through Authentik.
+#
+# Add COMPOSE_PROFILES=ai to .env to run Ollama for a local model as well.
+
 services:
   db:
     image: postgres:18-alpine
     restart: unless-stopped
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-postgres}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
-      POSTGRES_DB: ${POSTGRES_DB:-dossier}
-    ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+      POSTGRES_USER: dossier
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: dossier
     volumes:
       # Postgres 18+ keeps data in a versioned subdirectory, so mount the parent.
       - pgdata:/var/lib/postgresql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      test: ["CMD-SHELL", "pg_isready -U dossier -d dossier"]
       interval: 5s
       timeout: 5s
       retries: 10
 
   app:
-    build:
-      context: .
-      target: dev
+    # Built and published by this repository's CI on every push to main.
+    image: ${DOSSIER_IMAGE:-ghcr.io/cladkins/dossier:main}
+    restart: unless-stopped
     depends_on:
       db:
         condition: service_healthy
     environment:
-      # Overrides the localhost URL in .env, which is meant for tools run on the host.
-      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@db:5432/${POSTGRES_DB:-dossier}
+      DATABASE_URL: postgresql://dossier:${POSTGRES_PASSWORD}@db:5432/dossier
+      DOSSIER_SECRET: ${DOSSIER_SECRET:?Set DOSSIER_SECRET in .env}
+      # Your Authentik user name: you keep the data from before Dossier had
+      # several users. Everyone else gets a profile of their own.
+      DOSSIER_OWNER: ${DOSSIER_OWNER:-}
+      DOSSIER_BACKUP_RETENTION_DAYS: ${DOSSIER_BACKUP_RETENTION_DAYS:-}
+      # Your time zone, e.g. Europe/Berlin: nightly backups run at 03:00 in it.
+      TZ: ${TZ:-}
+      DOSSIER_AI_PROVIDER: ${DOSSIER_AI_PROVIDER:-}
+      DOSSIER_AI_URL: ${DOSSIER_AI_URL:-}
+      DOSSIER_AI_MODEL: ${DOSSIER_AI_MODEL:-}
+      DOSSIER_AI_KEY: ${DOSSIER_AI_KEY:-}
+      DOSSIER_AI_TIMEOUT_SECONDS: ${DOSSIER_AI_TIMEOUT_SECONDS:-}
+      # off stops the daily usage ping (see Privacy in the README).
+      DOSSIER_TELEMETRY: ${DOSSIER_TELEMETRY:-}
+      # Defaults for Settings → Job search.
+      DOSSIER_JOBS_SOURCE: ${DOSSIER_JOBS_SOURCE:-}
+      DOSSIER_JSEARCH_KEY: ${DOSSIER_JSEARCH_KEY:-}
+      DOSSIER_JSEARCH_HOST: ${DOSSIER_JSEARCH_HOST:-}
+      DOSSIER_ADZUNA_APP_ID: ${DOSSIER_ADZUNA_APP_ID:-}
+      DOSSIER_ADZUNA_KEY: ${DOSSIER_ADZUNA_KEY:-}
+      # Gmail and Calendar: a Google OAuth client (or enter it in Settings → Google).
+      DOSSIER_GOOGLE_CLIENT_ID: ${DOSSIER_GOOGLE_CLIENT_ID:-}
+      DOSSIER_GOOGLE_CLIENT_SECRET: ${DOSSIER_GOOGLE_CLIENT_SECRET:-}
+      # The address Dossier is reached at, for Google's redirect.
+      DOSSIER_PUBLIC_URL: ${DOSSIER_PUBLIC_URL:-}
+    # Only on the server itself: put a reverse proxy with HTTPS in front.
     ports:
-      - "3000:3000"
+      # 38470 rather than the common 3000; the app still listens on 3000 inside.
+      - "127.0.0.1:${DOSSIER_PORT:-38470}:3000"
     volumes:
-      - .:/app
-      # Keep the container's own (Debian) node_modules and build cache
-      # instead of the host's. node_modules is a named volume so installs made
-      # through docker/bin/yarn persist, whichever container ran them.
-      - node_modules:/app/node_modules
-      - /app/.next
+      - data:/data
+    # Room for Chromium, which prints the PDFs.
+    mem_limit: 1g
+    # Lets http://host.docker.internal:11434 reach an Ollama on the host.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
-  # Prisma Studio on http://localhost:5555. Not started by `docker compose up`;
-  # run `docker compose up -d studio` when you want it.
-  studio:
-    profiles: [tools]
-    build:
-      context: .
-      target: dev
-    depends_on:
-      db:
-        condition: service_healthy
-    environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@db:5432/${POSTGRES_DB:-dossier}
-    # Studio has no login and can edit every row, so keep it off the network.
-    ports:
-      - "127.0.0.1:5555:5555"
-    volumes:
-      - .:/app
-      - node_modules:/app/node_modules
-    init: true
-    command: sh -c "node docker/studio-proxy.mjs & exec node_modules/.bin/prisma studio --port 5555 --browser none"
-
-  # A local model for trying the AI features. Not started by `docker compose
-  # up`: run `docker compose up -d ollama`, then pull a model with
-  # `docker compose exec ollama ollama pull qwen2.5:3b`. The app reaches it at
-  # http://ollama:11434; models are kept in the ollama volume.
+  # A local model, with COMPOSE_PROFILES=ai in .env: `docker compose up -d`,
+  # then pull one (see the README). Dossier reaches it at http://ollama:11434.
   ollama:
     profiles: [ai]
     image: ollama/ollama:0.34.4
+    restart: unless-stopped
     volumes:
       - ollama:/root/.ollama
 
 volumes:
   pgdata:
-  node_modules:
+  data:
   ollama:

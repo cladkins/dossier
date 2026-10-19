@@ -19,7 +19,7 @@
 
 Dossier keeps your career history in one profile and turns it into a clean resume. For every job you apply to, it reads the posting, shows how you match, and drafts a tailored resume and cover letter that only use facts from your profile. You refine them in a chat, download them as PDFs and track each application from draft to offer.
 
-It's for one person on a small server: one password, your data in your own PostgreSQL database, and an AI model of your choice. That can be a local model through Ollama, so your profile and documents never leave your server, or a hosted one (any OpenAI-compatible API, or Anthropic), which then receives what it writes from. [Privacy](#privacy) says what goes where.
+It's for you and your family on a small server: each person signs in through Authentik and gets a profile of their own, all in your own PostgreSQL database, and an AI model of your choice. That can be a local model through Ollama, so your profile and documents never leave your server, or a hosted one (any OpenAI-compatible API, or Anthropic), which then receives what it writes from. [Privacy](#privacy) says what goes where.
 
 ## Demo
 
@@ -98,38 +98,25 @@ docker compose version
 
 To install by hand instead, follow [Docker's guide for your distribution](https://docs.docker.com/engine/install/).
 
-### 3. Set up the database
+### 3. Set up Dossier
 
 Dossier keeps everything in PostgreSQL 18, which runs in its own container next to the app. Nothing outside can reach it, only the app, and its data lives in a Docker volume that survives restarts and upgrades.
 
-Make a folder for Dossier, fetch the Compose file into it, and give the database a random password:
+Make a folder for Dossier, fetch the Compose file into it, and fill in `.env`:
 
 ```bash
 mkdir ~/dossier && cd ~/dossier
-curl -fsSL -o compose.yml https://raw.githubusercontent.com/AienTech/dossier/main/compose.production.yml
+curl -fsSL -o compose.yml https://raw.githubusercontent.com/cladkins/dossier/main/compose.yml
 echo "POSTGRES_PASSWORD=$(openssl rand -hex 24)" > .env
+echo "DOSSIER_SECRET=$(openssl rand -base64 32)" >> .env
+echo "DOSSIER_OWNER=<your Authentik user name>" >> .env
 chmod 600 .env
 ```
 
-`.env` holds your secrets, so it's readable only by you. The database starts with the app in the next step; Compose waits until it's ready before it starts Dossier.
+- **`DOSSIER_SECRET`** encrypts saved API keys and signs what Dossier passes around internally.
+- **`DOSSIER_OWNER`** is your Authentik user name. You keep the data in the main database; everyone else gets an empty profile of their own.
 
-### 4. Set up the app
-
-Dossier needs two more secrets in `.env`:
-
-- **`DOSSIER_SECRET`:** 32 or more random characters. It signs sessions and encrypts saved API keys.
-- **`DOSSIER_PASSWORD`:** a hash of the password you'll sign in with. Dossier only takes the hash, never the password itself, so reading the server's settings doesn't reveal it.
-
-```bash
-echo "DOSSIER_SECRET=$(openssl rand -base64 32)" >> .env
-docker run --rm -it ghcr.io/aientech/dossier hash-password
-```
-_Note_: In case you are building or running it locally on Apple Silicon (M-series Mac), use the following command to specify the platform:
-```bash
-docker run --platform linux/amd64 --rm -it ghcr.io/aientech/dossier hash-password
-```
-
-Type your password twice. The command prints one line that starts with `argon2id:`; add it to `.env` as `DOSSIER_PASSWORD=argon2id:…` (for example with `nano .env`). Then start Dossier and watch it come up:
+`.env` holds your secrets, so it's readable only by you. Start Dossier and watch it come up:
 
 ```bash
 docker compose up -d
@@ -138,26 +125,44 @@ docker compose logs -f app
 
 On every start, Dossier applies the database migrations and loads its built-in themes before it serves, and the log shows each step. Press Ctrl+C to stop following it. `curl -s localhost:38470/api/health` answers `{"status":"ok", …}` once it's up.
 
-**HTTPS.** Dossier only listens on the server itself (`127.0.0.1:38470`), so put a reverse proxy with HTTPS in front of it. [Caddy](https://caddyserver.com) gets and renews the certificate on its own. Install it (on older releases, see [Caddy's install guide](https://caddyserver.com/docs/install)) and replace its default configuration with your domain:
+### 4. Put Authentik in front of it
+
+Dossier has no sign-in of its own. [Authentik](https://goauthentik.io) signs people in, in front of it, and tells Dossier who each person is. Dossier only listens on the server itself (`127.0.0.1:38470`), so every request goes through Authentik. See [Signing in with Authentik](#signing-in-with-authentik) for the Authentik side. With [Caddy](https://caddyserver.com), which also gets and renews the HTTPS certificate on its own:
 
 ```bash
 sudo apt install -y caddy
 sudo tee /etc/caddy/Caddyfile > /dev/null <<'EOF'
 dossier.example.com {
-    reverse_proxy localhost:38470
+    route {
+        # Authentik's own pages: sign-in, sign-out.
+        reverse_proxy /outpost.goauthentik.io/* https://auth.example.com {
+            header_up Host {upstream_hostport}
+        }
+        # Asks Authentik about every request and passes on who signed in.
+        forward_auth https://auth.example.com {
+            uri /outpost.goauthentik.io/auth/caddy
+            copy_headers X-Authentik-Username X-Authentik-Uid X-Authentik-Name X-Authentik-Email X-Authentik-Groups
+            trusted_proxies private_ranges
+        }
+        reverse_proxy localhost:38470
+    }
 }
 EOF
 sudo systemctl reload caddy
 ```
 
-Open `https://dossier.example.com` and sign in. Then pick an AI model in **Settings → AI provider** (see [Choosing an AI provider](#choosing-an-ai-provider)) and, if you like, a job source in **Settings → Job search**.
+Replace `auth.example.com` with your Authentik's address. Open `https://dossier.example.com`, sign in with Authentik, then pick an AI model in **Settings → AI provider** (see [Choosing an AI provider](#choosing-an-ai-provider)) and, if you like, a job source in **Settings → Job search**.
 
 <details>
-<summary>Another proxy, or no HTTPS at home</summary>
+<summary>Traefik, nginx or Nginx Proxy Manager</summary>
 
-- **Traefik, nginx or another proxy:** it has to set `X-Forwarded-Proto` and append the client's address to `X-Forwarded-For`. Caddy and Traefik do both by default; with nginx, add `proxy_set_header X-Forwarded-Proto $scheme;` and `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;`, and raise `client_max_body_size` to `12m` so imports of up to 10 MB get through. Dossier relies on these headers: `X-Forwarded-Proto: https` makes the session cookie `Secure`, and the last address in `X-Forwarded-For` is the client the sign-in rate limit counts. So never expose port 38470 itself to the internet: requests that skip the proxy could set those headers themselves.
-- **A home network without a domain:** change the app's `ports` entry in `compose.yml` to `"38470:3000"`, run `docker compose up -d`, and open `http://<the server's address>:38470`. The session cookie can't be marked `Secure`, and password sign-in is refused over plain HTTP from another machine unless you set `DOSSIER_ALLOW_INSECURE_LOGIN=true` (your password then crosses the network readable). Signing in with Authentik over HTTPS avoids both.
+Use Authentik's forward auth for your proxy (Authentik shows the snippet on the provider's page). It has to:
 
+- pass `X-authentik-uid`, `X-authentik-username` and `X-authentik-name` from Authentik's answer on to Dossier;
+- set `X-Forwarded-Proto` and append the client's address to `X-Forwarded-For`;
+- with nginx, raise `client_max_body_size` to `12m` so imports of up to 10 MB get through.
+
+Never expose port 38470 to your network or the internet: Dossier trusts the `X-authentik-*` headers, so a request that skips Authentik could claim to be anyone.
 </details>
 
 ## Environment variables
@@ -169,8 +174,8 @@ Dossier is configured with environment variables; everything else is set in the 
 | Variable | What it's for |
 |---|---|
 | `POSTGRES_PASSWORD` | The database's password. `compose.yml` builds the app's `DATABASE_URL` from it. |
-| `DOSSIER_PASSWORD` | With password sign-in only: a hash of the password you sign in with, made with `hash-password` (see [step 4](#4-set-up-the-app)); the password itself isn't accepted. It's only read from here, never stored. Changing it signs every session out. Not needed when you [sign in with Authentik](#signing-in-with-authentik-multi-user). |
-| `DOSSIER_SECRET` | At least 32 random characters. Signs sessions and encrypts saved API keys; changing it signs everyone out, and API keys have to be entered again. |
+| `DOSSIER_SECRET` | At least 32 random characters. Encrypts saved API keys and signs what Dossier passes around internally; changing it means API keys have to be entered again. |
+| `DOSSIER_OWNER` | Your Authentik user name. You keep the main database; everyone else gets their own. Without it, everyone gets their own and the main database goes unused. |
 
 **Optional:**
 
@@ -190,52 +195,26 @@ Dossier is configured with environment variables; everything else is set in the 
 | `DOSSIER_ADZUNA_APP_ID`, `DOSSIER_ADZUNA_KEY` | none | Adzuna's app ID and key. |
 | `DOSSIER_GOOGLE_CLIENT_ID`, `DOSSIER_GOOGLE_CLIENT_SECRET` | none | A Google OAuth client, for Gmail and Calendar (see [Connecting Gmail and Calendar](#connecting-gmail-and-calendar)). A client saved in Settings → Google wins. |
 | `DOSSIER_PUBLIC_URL` | the address in use | The address Dossier is reached at, e.g. `https://dossier.example.com`, for Google's redirect after you sign in. Only needed when your proxy doesn't pass on the host and protocol. |
-| `DOSSIER_AUTH` | `oidc` when `DOSSIER_OIDC_ISSUER` is set, else `password` | How people sign in: `password` (one shared password, one profile) or `oidc` (each person signs in with Authentik or another OpenID Connect provider and gets a profile of their own). |
-| `DOSSIER_OIDC_ISSUER`, `DOSSIER_OIDC_CLIENT_ID`, `DOSSIER_OIDC_CLIENT_SECRET` | none | The OpenID Connect provider and client (see [Signing in with Authentik](#signing-in-with-authentik-multi-user)). |
-| `DOSSIER_OIDC_ALLOWED_GROUPS` | anyone | Comma-separated groups; only their members may sign in. |
-| `DOSSIER_OIDC_OWNER` | none | The user name (or `sub`) of the person who keeps the data from before multi-user sign-in. |
-| `DOSSIER_OIDC_NAME` | `Authentik` | The name on the sign-in button. |
-| `DOSSIER_ALLOW_INSECURE_LOGIN` | `false` | `true` allows password sign-in over plain HTTP from other machines. Off by default: the password would cross the network readable. |
-| `<NAME>_FILE` | none | Reads a secret from a file instead, e.g. `DOSSIER_SECRET_FILE=/run/secrets/dossier_secret`. Works for `DATABASE_URL`, `DOSSIER_SECRET`, `DOSSIER_PASSWORD`, `DOSSIER_OIDC_CLIENT_SECRET`, `DOSSIER_AI_KEY`, `DOSSIER_JSEARCH_KEY`, `DOSSIER_ADZUNA_KEY` and `DOSSIER_GOOGLE_CLIENT_SECRET`. A file keeps the value out of `docker inspect`. |
-| `DOSSIER_IMAGE` | `ghcr.io/aientech/dossier:latest` | The image to run. Set a version, e.g. `ghcr.io/aientech/dossier:v1.4.1`, to upgrade only when you choose. |
+| `<NAME>_FILE` | none | Reads a secret from a file instead, e.g. `DOSSIER_SECRET_FILE=/run/secrets/dossier_secret`. Works for `DATABASE_URL`, `DOSSIER_SECRET`, `DOSSIER_AI_KEY`, `DOSSIER_JSEARCH_KEY`, `DOSSIER_ADZUNA_KEY` and `DOSSIER_GOOGLE_CLIENT_SECRET`. A file keeps the value out of `docker inspect`. |
+| `DOSSIER_IMAGE` | `ghcr.io/cladkins/dossier:main` | The image to run: this repository's CI publishes it on every push to `main`, also tagged with the commit SHA. Set a SHA tag to upgrade only when you choose. |
 | `DOSSIER_PORT` | `38470` | The port on the server (`127.0.0.1`) that Dossier listens on, for the reverse proxy. |
 | `COMPOSE_PROFILES` | none | `ai` runs Ollama as well (see [Local model with Ollama](#local-model-with-ollama)). |
 
 Running the image without the Compose file? Set `DATABASE_URL` (`postgresql://user:password@host:5432/database`) instead of `POSTGRES_PASSWORD`, and mount a volume at `/data`, where nightly backups and zipped PDFs go.
 
-## Signing in with Authentik (multi-user)
+## Signing in with Authentik
 
-With an OpenID Connect provider such as [Authentik](https://goauthentik.io), each person signs in with their own account and gets their own profile, applications, settings, Google connection, backups and AI tasks. Dossier never sees their passwords.
+Each person signs in with their own Authentik account and gets their own profile, applications, settings, Google connection, backups and AI tasks. Dossier never sees a password.
 
-Each person's data lives in a database of their own on the same Postgres server, named after the main one (`dossier_u…`). Dossier creates it the first time that person signs in and brings it up to date on every start. The Postgres user in `DATABASE_URL` needs the right to create databases; the one `compose.yml` sets up has it.
+1. **In Authentik**, create a provider: **Applications → Providers → Create → Proxy Provider**, mode **Forward auth (single application)**, external host `https://dossier.example.com`.
+2. **Create an application** for it (**Applications → Applications → Create**) and bind your family group to it under **Policy / Group / User Bindings**, so only that group gets in.
+3. **Add the application to your outpost**: **Applications → Outposts**, edit the embedded outpost (or yours), and select it.
 
-1. **In Authentik**, go to **Applications → Providers → Create → OAuth2/OpenID Provider**:
-   - **Client type:** Confidential.
-   - **Redirect URIs:** `https://dossier.example.com/api/auth/callback` (strict), with your address.
-   - **Scopes:** keep `openid`, `email` and `profile`. Authentik's `profile` scope includes the `groups` claim.
-   - **Subject mode:** keep the default (hashed user ID). Changing it later gives everyone a new, empty profile.
-2. **Create an application** for the provider (**Applications → Applications → Create**) with the slug `dossier`. Bind a group to it (for example `family`) under **Policy / Group / User Bindings**, so only that group can open it.
-3. **In `.env`:**
+Each person's data lives in a database of their own on the same Postgres server, named after the main one (`dossier_u…`). Dossier creates it on their first visit and brings it up to date on every start. The owner (`DOSSIER_OWNER`) keeps the main database.
 
-   ```sh
-   DOSSIER_OIDC_ISSUER=https://auth.example.com/application/o/dossier/
-   DOSSIER_OIDC_CLIENT_ID=<Client ID from the provider>
-   DOSSIER_OIDC_CLIENT_SECRET=<Client Secret from the provider>
-   DOSSIER_PUBLIC_URL=https://dossier.example.com
-   # Optional: also checked by Dossier itself.
-   DOSSIER_OIDC_ALLOWED_GROUPS=family
-   # Optional: your Authentik user name. You keep the profile and applications
-   # you had with password sign-in; everyone else starts empty.
-   DOSSIER_OIDC_OWNER=chris
-   ```
-
-   `DOSSIER_PASSWORD` is no longer needed; remove it. Then run `docker compose up -d`.
-
-The sign-in page sends people straight to Authentik, which signs them back in without a prompt while their Authentik session lasts. Dossier's own session lasts 24 hours or until the browser closes. **Sign out** ends it in Dossier only; signing out of Authentik as well is done in Authentik.
+**Sign out** in the sidebar signs out of Authentik. To remove someone, take them out of the group in Authentik; their data stays in their database until you drop it (`DROP DATABASE "dossier_u…"`).
 
 Shared between everyone: the server's environment variables (`DOSSIER_AI_*`, job source keys, the Google OAuth client). Each person can override them in their own Settings. A person's backups and zipped PDFs go to `/data/users/<id>/`; the owner's stay in `/data`.
-
-To remove someone, take them out of the group in Authentik. Their data stays in their database until you drop it (`DROP DATABASE "dossier_u…"`).
 
 ## Choosing an AI provider
 
@@ -326,13 +305,13 @@ docker compose pull
 docker compose up -d
 ```
 
-`latest` is always the newest release. If you've pinned a version with `DOSSIER_IMAGE`, change it to the new one first. When a release's notes say `compose.yml` changed, fetch it again with the `curl` line from [step 3](#3-set-up-the-database).
+`latest` is always the newest release. If you've pinned a version with `DOSSIER_IMAGE`, change it to the new one first. When a release's notes say `compose.yml` changed, fetch it again with the `curl` line from [step 3](#3-set-up-dossier).
 
 The new version updates the database on start. Going back to an older version after that isn't supported: restore the backup you took instead.
 
 From 1.4, Dossier sends a usage ping (see [Privacy](#privacy)). If you'd rather it didn't, set `DOSSIER_TELEMETRY=off` before you upgrade to 1.4 or later.
 
-**From 1.0:** Dossier 1.0 took the password itself in `DOSSIER_PASSWORD`; newer versions only take a hash of it, and don't start until it is one. Make the hash with the newer image (`docker run --rm -it ghcr.io/aientech/dossier hash-password`, typing your current password to keep it), put it in `.env`, then pull and start as above. Every browser is signed out once and signs in again with the same password.
+**From password sign-in:** Dossier no longer has a password of its own; Authentik signs people in. Remove `DOSSIER_PASSWORD` from `.env`, set `DOSSIER_OWNER` to your Authentik user name so you keep your data, fetch the new `compose.yml`, and set up Authentik as in [step 4](#4-put-authentik-in-front-of-it).
 
 ## Troubleshooting
 
@@ -340,13 +319,12 @@ From 1.4, Dossier sends a usage ping (see [Privacy](#privacy)). If you'd rather 
 
 - **"Dossier didn't start: applying the database migrations failed."** The error above that line says why. `P1001` means the database isn't reachable: check that the `db` container is running (`docker compose ps`). If a migration failed halfway, the database needs repairing before the next start: restore the dump you took before upgrading, or ask for help with the log.
 - **"… is not set" or "DOSSIER_SECRET is too short":** set the variable the log names in `.env`.
-- **"DOSSIER_PASSWORD must be a hash of your password":** it's set to the password itself, which Dossier 1.0 took. Make a hash with `docker run --rm -it ghcr.io/aientech/dossier hash-password` and set `DOSSIER_PASSWORD` to it.
 - **PDFs fail or time out:** Chromium needs memory; give the app at least 768 MB (`compose.yml` gives it 1 GB). Fonts are bundled with Dossier, so documents look the same everywhere; a custom document language in a script Dossier has no font for may show empty boxes.
 - **The AI times out:** local models on a CPU are slow. Try a smaller model, or raise `DOSSIER_AI_TIMEOUT_SECONDS`. **Test connection** in Settings shows whether Dossier reaches the server at all; inside Docker, `localhost` isn't the server.
 - **An import fails with "413" or "Request Entity Too Large":** the reverse proxy's upload limit is below 10 MB. Caddy has none by default; with nginx, set `client_max_body_size 12m;`.
 - **"That file is over 10 MB":** imports are capped at 10 MB, roughly 500 applications. Raising the cap means changing two settings in the code (see [Import size limit](DEVELOPMENT.md#import-size-limit)).
-- **"Too many attempts":** after five wrong passwords in a minute, sign-in pauses for 30 seconds, then longer each time, up to 15 minutes. The count is kept in the database, so restarting doesn't reset it: wait it out.
-- **Forgot the password:** make a hash of a new one with `hash-password` (see [step 4](#4-set-up-the-app)) and set it as `DOSSIER_PASSWORD` in `.env`.
+- **Every page shows "Sign in through Authentik":** requests reach Dossier without Authentik's `X-authentik-*` headers. Check that the proxy sends them on (`copy_headers` with Caddy) and that you open Dossier at the address Authentik serves.
+- **Your data is missing after signing in:** `DOSSIER_OWNER` doesn't match your Authentik user name, so you got a new, empty profile. Fix it and run `docker compose up -d`.
 - **Is it up?** `/api/health` answers `{"status":"ok"}` when the app and its database are fine, and 503 when the database isn't reachable.
 
 ## Privacy
@@ -364,7 +342,7 @@ Everything you enter is kept in your PostgreSQL database and data directory. [PR
 ## Known limitations
 
 - **Desktop only:** made for a laptop or desktop browser, not for phones.
-- **Single user:** one password and one profile; there are no accounts.
+- **Sign-in needs Authentik:** Dossier has no sign-in of its own; Authentik (or another proxy that sends the same `X-authentik-*` headers) has to sit in front of it.
 - **English interface:** documents can be written in other languages, but the app itself is in English.
 - **One instance:** run a single copy of the app per database. The nightly backups, the AI job queue and the PDF browser live inside the app's process.
 

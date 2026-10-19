@@ -5,7 +5,7 @@ import { jwtVerify, SignJWT } from "jose";
 import { deriveKey } from "@/lib/keys";
 import { DEFAULT_TENANT, isTenantId } from "@/lib/tenant";
 
-// Headless Chromium has no session cookie. It reaches a print page with a
+// Headless Chromium doesn't come through Authentik. It reaches a print page with a
 // short-lived token instead, signed with a key derived from DOSSIER_SECRET
 // and bound to that one page, sent in a request header so it never shows up
 // in a URL or a log. It names the tenant too, so the page reads the right

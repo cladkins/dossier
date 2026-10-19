@@ -13,7 +13,7 @@ vi.mock("@/lib/prisma", async () => {
   return { prisma: db.client };
 });
 vi.mock("@/lib/auth/session", () => ({
-  getSession: async () => ({ persistent: false, issuedAt: new Date(), expiresAt: new Date(Date.now() + 60_000) }),
+  getSession: async () => ({ tenant: "default" }),
 }));
 
 const prisma = () => db.client!;

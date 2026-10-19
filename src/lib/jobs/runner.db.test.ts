@@ -7,8 +7,6 @@ import { createTestClient, resetDatabase } from "@/test/db";
 import { cancelApplicationJobs, cancelJob, defineJob, getJob, recoverInterruptedJobs, retryJob, startJob, subscribeJob } from "./runner";
 
 const db = vi.hoisted(() => ({ client: undefined as ReturnType<typeof createTestClient> | undefined }));
-// One user, as with password sign-in.
-vi.mock("@/lib/auth/mode", () => ({ authMode: () => "password" }));
 vi.mock("@/lib/prisma", async () => {
   const { createTestClient } = await import("@/test/db");
   db.client = createTestClient();

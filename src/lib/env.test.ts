@@ -4,16 +4,10 @@ import { describe, expect, it } from "vitest";
 
 import { EnvError, parseEnv, readSecretFiles } from "./env";
 
-// A hash of "correct horse" (scripts/hash-password.ts).
-const PASSWORD_HASH = "argon2id:m=19456,t=2,p=1:CLZW5wQoCjh3Q9CHBp_JWw:Ak2xS7TYlYYrhemlgBkVxFmWXfcMq_rjd0mJGZcZFfA";
-
 const valid = {
-  DOSSIER_PASSWORD: PASSWORD_HASH,
   DOSSIER_SECRET: "a".repeat(32),
   DATABASE_URL: "postgresql://postgres:postgres@db:5432/dossier",
 };
-
-const withoutPassword = { DOSSIER_SECRET: valid.DOSSIER_SECRET, DATABASE_URL: valid.DATABASE_URL };
 
 function problems(source: Record<string, string | undefined>): string[] {
   try {
@@ -29,10 +23,6 @@ describe("parseEnv", () => {
   it("accepts the required variables and fills in defaults", () => {
     expect(parseEnv(valid)).toEqual({
       ...valid,
-      DOSSIER_AUTH: "password",
-      DOSSIER_ALLOW_INSECURE_LOGIN: false,
-      DOSSIER_OIDC_ALLOWED_GROUPS: [],
-      DOSSIER_OIDC_NAME: "Authentik",
       DOSSIER_DATA_DIR: "/data",
       DOSSIER_BACKUP_RETENTION_DAYS: 14,
       DOSSIER_TELEMETRY: "on",
@@ -80,8 +70,8 @@ describe("parseEnv", () => {
     const env = parseEnv({ ...valid, DOSSIER_AI_KEY: "", DOSSIER_DATA_DIR: " " });
     expect(env.DOSSIER_AI_KEY).toBeUndefined();
     expect(env.DOSSIER_DATA_DIR).toBe("/data");
-    expect(problems({ ...valid, DOSSIER_PASSWORD: "" })).toEqual([
-      expect.stringMatching(/^DOSSIER_PASSWORD is not set\./),
+    expect(problems({ ...valid, DOSSIER_SECRET: "" })).toEqual([
+      expect.stringMatching(/^DOSSIER_SECRET is not set\./),
     ]);
   });
 
@@ -90,33 +80,11 @@ describe("parseEnv", () => {
       expect.stringMatching(/^DOSSIER_SECRET is not set\. .*openssl rand/),
       expect.stringMatching(/^DATABASE_URL is not set\. /),
     ]);
-    expect(problems(withoutPassword)).toEqual([expect.stringMatching(/^DOSSIER_PASSWORD is not set\. Set it to/)]);
   });
 
-  it("signs in with OIDC when an issuer is set, and then needs no password", () => {
-    const oidc = {
-      ...withoutPassword,
-      DOSSIER_OIDC_ISSUER: "https://auth.example.com/application/o/dossier/",
-      DOSSIER_OIDC_CLIENT_ID: "dossier",
-      DOSSIER_OIDC_CLIENT_SECRET: "client-secret",
-      DOSSIER_OIDC_ALLOWED_GROUPS: " family, ,admins ",
-      DOSSIER_OIDC_OWNER: " Chris ",
-    };
-    expect(parseEnv(oidc)).toMatchObject({
-      DOSSIER_AUTH: "oidc",
-      DOSSIER_OIDC_ALLOWED_GROUPS: ["family", "admins"],
-      DOSSIER_OIDC_OWNER: "chris",
-      DOSSIER_OIDC_NAME: "Authentik",
-    });
-    expect(parseEnv(valid).DOSSIER_AUTH).toBe("password");
-    expect(problems({ ...withoutPassword, DOSSIER_AUTH: "oidc" })).toEqual([
-      expect.stringMatching(/^DOSSIER_OIDC_ISSUER is not set\./),
-      expect.stringMatching(/^DOSSIER_OIDC_CLIENT_ID is not set\./),
-      expect.stringMatching(/^DOSSIER_OIDC_CLIENT_SECRET is not set\./),
-    ]);
-    expect(problems({ ...valid, DOSSIER_ALLOW_INSECURE_LOGIN: "yes" })).toEqual([
-      'DOSSIER_ALLOW_INSECURE_LOGIN must be true or false (got "yes").',
-    ]);
+  it("reads the owner's Authentik user name, in lower case", () => {
+    expect(parseEnv({ ...valid, DOSSIER_OWNER: " Chris " }).DOSSIER_OWNER).toBe("chris");
+    expect(parseEnv(valid).DOSSIER_OWNER).toBeUndefined();
   });
 
   it("reads secrets from <NAME>_FILE, without the trailing newline", () => {
@@ -131,13 +99,6 @@ describe("parseEnv", () => {
     expect(() => readSecretFiles({ DATABASE_URL_FILE: "/missing" }, read)).toThrow(EnvError);
   });
 
-  it("wants a hash of the password, not the password itself", () => {
-    expect(problems({ ...valid, DOSSIER_PASSWORD: "correct horse" })).toEqual([
-      expect.stringMatching(/^DOSSIER_PASSWORD must be a hash of your password, not the password itself\. .*hash-password/),
-    ]);
-    expect(parseEnv({ ...valid, DOSSIER_PASSWORD: ` ${PASSWORD_HASH}\n` }).DOSSIER_PASSWORD).toBe(PASSWORD_HASH);
-  });
-
   it("rejects a secret shorter than 32 characters", () => {
     expect(problems({ ...valid, DOSSIER_SECRET: "short" })).toEqual([
       expect.stringMatching(/^DOSSIER_SECRET is too short \(5 characters\)\./),
@@ -146,11 +107,9 @@ describe("parseEnv", () => {
 
   it("never echoes secret values", () => {
     const messages = problems({
-      DOSSIER_PASSWORD: "hunter2",
       DOSSIER_SECRET: "tiny-secret",
       DATABASE_URL: "mysql://root:db-password@db/dossier",
     }).join("\n");
-    expect(messages).not.toContain("hunter2");
     expect(messages).not.toContain("tiny-secret");
     expect(messages).not.toContain("db-password");
     expect(messages).toMatch(/DATABASE_URL must be a PostgreSQL connection string/);
