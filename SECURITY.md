@@ -8,7 +8,8 @@ Please report it privately through GitHub: on the repository's **Security** tab,
 
 ## What Dossier does
 
-- **Sign-in.** One password, kept only as an argon2id hash in `DOSSIER_PASSWORD`, so the environment doesn't reveal it; the server won't start with the password itself there. The session is an encrypted, HttpOnly, SameSite=Lax cookie, marked Secure over HTTPS. Failed sign-ins are rate-limited per IP and overall. See [Sign-in](DEVELOPMENT.md#sign-in).
+- **Sign-in.** One password, kept only as an argon2id hash in `DOSSIER_PASSWORD`, so the environment doesn't reveal it; the server won't start with the password itself there. The session is an encrypted, HttpOnly, SameSite=Lax cookie, marked Secure over HTTPS. Failed sign-ins are rate-limited per IP and overall. See [Sign-in](DEVELOPMENT.md#sign-in). Password sign-in over plain HTTP is refused unless the browser is on the server itself (`DOSSIER_ALLOW_INSECURE_LOGIN=true` overrides that).
+- **Multi-user sign-in (OIDC).** With Authentik or another OpenID Connect provider, Dossier never sees a password. It uses the authorization code flow with PKCE, state and nonce, and checks the ID token's signature, issuer, audience and expiry. Each person's data lives in a separate database; the app picks it from the session, and the proxy passes it on in a header signed with a key derived from `DOSSIER_SECRET`, so a browser can't choose another person's database. Code that touches the database without a signed-in user fails instead of falling back to someone's data.
 - **Every request checks the session.** The proxy only does a quick check before a page renders, so each page, Server Action and route handler checks the session again next to the data. Server Actions go through `action()`, route handlers through `route()`, and a test (`src/lib/session-audit.test.ts`) fails when one doesn't. The only exceptions are signing in and signing out.
 - **Cross-site requests.** Next.js refuses Server Actions from another origin, and `route()` does the same for route handlers.
 - **Content-Security-Policy.** Every page gets a policy with a fresh nonce: scripts run only when they carry it, nothing loads from other hosts, and no other site may frame Dossier. `next.config.ts` adds `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Cross-Origin-Opener-Policy` and `Permissions-Policy` to every response.
@@ -33,6 +34,7 @@ So the worst a hostile posting or mail can do is get odd wording into its own dr
 
 - **Use HTTPS.** Put Dossier behind a reverse proxy that ends TLS (Caddy, Traefik, nginx). Set `Strict-Transport-Security` there. Dossier adds `upgrade-insecure-requests` to its policy when the proxy says the request came over HTTPS (`X-Forwarded-Proto`).
 - **Don't expose port 3000 directly.** Rate limiting trusts the last `X-Forwarded-For` entry, which is only the real client behind a proxy.
+- **Keep secrets out of `docker inspect`.** Every secret also reads from a file: `DOSSIER_SECRET_FILE`, `DATABASE_URL_FILE`, `DOSSIER_OIDC_CLIENT_SECRET_FILE` and so on, for Docker secrets.
 - **Pick a long `DOSSIER_SECRET`** and keep it with your backups: without it, saved API keys can't be read. Changing it or the password signs out every session.
 - **Keep it updated.** Settings → About tells you when a new version is out.
 

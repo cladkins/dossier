@@ -1,11 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { prisma } from "@/lib/prisma";
+import { systemPrisma as prisma } from "@/lib/prisma";
 import { appVersion } from "@/lib/version";
 
 import { GET } from "./route";
 
-vi.mock("@/lib/prisma", () => ({ prisma: { $queryRaw: vi.fn() } }));
+vi.mock("@/lib/prisma", () => ({ systemPrisma: { $queryRaw: vi.fn() } }));
 
 describe("GET /api/health (E12-4)", () => {
   beforeEach(() => vi.useRealTimers());

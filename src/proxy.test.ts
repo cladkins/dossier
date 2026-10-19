@@ -7,6 +7,7 @@ import { encodeSession, passwordFingerprint, SESSION_COOKIE } from "@/lib/auth/s
 import { deriveKey } from "@/lib/keys";
 import { messages } from "@/lib/messages";
 import { PRINT_TOKEN_HEADER, signPrintToken } from "@/lib/pdf/print-token";
+import { TENANT_HEADER, verifyTenantHeader } from "@/lib/tenant";
 
 import { config, proxy } from "./proxy";
 
@@ -16,6 +17,10 @@ vi.mock("@/lib/env", () => ({
 
 const key = deriveKey("session", "a".repeat(32));
 const fingerprint = passwordFingerprint("correct horse", deriveKey("password-fingerprint", "a".repeat(32)));
+
+const tenantKey = deriveKey("tenant-header", "a".repeat(32));
+/** The tenant the proxy passed on to the app, checked like the app checks it. */
+const passedTenant = (response: Response) => verifyTenantHeader(response.headers.get(`x-middleware-request-${TENANT_HEADER}`), tenantKey);
 
 const matches = (url: string) => unstable_doesMiddlewareMatch({ config, nextConfig: {}, url });
 
@@ -126,5 +131,33 @@ describe("proxy", () => {
     const profileToken = await signPrintToken("/profile");
     const response = await proxy(request("/profile", { headers: { [PRINT_TOKEN_HEADER]: profileToken } }));
     expect(getRedirectUrl(response)).toContain("/login");
+  });
+
+  it("passes the session's tenant on, signed, to pages and API routes", async () => {
+    const token = await encodeSession({ persistent: false, tenant: "u0123456789abcdef0123" }, { key, fingerprint });
+    expect(passedTenant(await proxy(request("/profile", { cookie: token })))).toBe("u0123456789abcdef0123");
+    expect(passedTenant(await proxy(request("/api/pdf/1", { cookie: token })))).toBe("u0123456789abcdef0123");
+  });
+
+  it("drops a tenant header the browser sends", async () => {
+    const forged = { [TENANT_HEADER]: "u0123456789abcdef0123.forged" };
+    const token = await encodeSession({ persistent: false }, { key, fingerprint });
+    expect(passedTenant(await proxy(request("/profile", { cookie: token, headers: forged })))).toBe("default");
+    for (const path of ["/login", "/api/auth/callback"]) {
+      const response = await proxy(request(path, { headers: forged }));
+      expect(response.headers.get(`x-middleware-request-${TENANT_HEADER}`) ?? "").toBe("");
+    }
+  });
+
+  it("lets the OIDC sign-in routes through signed out", async () => {
+    for (const path of ["/api/auth/login", "/api/auth/callback"]) {
+      expect((await proxy(request(path))).headers.get("x-middleware-next"), path).toBe("1");
+    }
+  });
+
+  it("opens a print page as the user its token was made for", async () => {
+    const token = await signPrintToken("/print/base", undefined, "u0123456789abcdef0123");
+    const response = await proxy(request("/print/base", { headers: { [PRINT_TOKEN_HEADER]: token } }));
+    expect(passedTenant(response)).toBe("u0123456789abcdef0123");
   });
 });

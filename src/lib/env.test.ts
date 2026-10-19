@@ -2,7 +2,7 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { EnvError, parseEnv } from "./env";
+import { EnvError, parseEnv, readSecretFiles } from "./env";
 
 // A hash of "correct horse" (scripts/hash-password.ts).
 const PASSWORD_HASH = "argon2id:m=19456,t=2,p=1:CLZW5wQoCjh3Q9CHBp_JWw:Ak2xS7TYlYYrhemlgBkVxFmWXfcMq_rjd0mJGZcZFfA";
@@ -12,6 +12,8 @@ const valid = {
   DOSSIER_SECRET: "a".repeat(32),
   DATABASE_URL: "postgresql://postgres:postgres@db:5432/dossier",
 };
+
+const withoutPassword = { DOSSIER_SECRET: valid.DOSSIER_SECRET, DATABASE_URL: valid.DATABASE_URL };
 
 function problems(source: Record<string, string | undefined>): string[] {
   try {
@@ -27,6 +29,10 @@ describe("parseEnv", () => {
   it("accepts the required variables and fills in defaults", () => {
     expect(parseEnv(valid)).toEqual({
       ...valid,
+      DOSSIER_AUTH: "password",
+      DOSSIER_ALLOW_INSECURE_LOGIN: false,
+      DOSSIER_OIDC_ALLOWED_GROUPS: [],
+      DOSSIER_OIDC_NAME: "Authentik",
       DOSSIER_DATA_DIR: "/data",
       DOSSIER_BACKUP_RETENTION_DAYS: 14,
       DOSSIER_TELEMETRY: "on",
@@ -81,10 +87,48 @@ describe("parseEnv", () => {
 
   it("names every missing required variable", () => {
     expect(problems({})).toEqual([
-      expect.stringMatching(/^DOSSIER_PASSWORD is not set\. Set it to/),
       expect.stringMatching(/^DOSSIER_SECRET is not set\. .*openssl rand/),
       expect.stringMatching(/^DATABASE_URL is not set\. /),
     ]);
+    expect(problems(withoutPassword)).toEqual([expect.stringMatching(/^DOSSIER_PASSWORD is not set\. Set it to/)]);
+  });
+
+  it("signs in with OIDC when an issuer is set, and then needs no password", () => {
+    const oidc = {
+      ...withoutPassword,
+      DOSSIER_OIDC_ISSUER: "https://auth.example.com/application/o/dossier/",
+      DOSSIER_OIDC_CLIENT_ID: "dossier",
+      DOSSIER_OIDC_CLIENT_SECRET: "client-secret",
+      DOSSIER_OIDC_ALLOWED_GROUPS: " family, ,admins ",
+      DOSSIER_OIDC_OWNER: " Chris ",
+    };
+    expect(parseEnv(oidc)).toMatchObject({
+      DOSSIER_AUTH: "oidc",
+      DOSSIER_OIDC_ALLOWED_GROUPS: ["family", "admins"],
+      DOSSIER_OIDC_OWNER: "chris",
+      DOSSIER_OIDC_NAME: "Authentik",
+    });
+    expect(parseEnv(valid).DOSSIER_AUTH).toBe("password");
+    expect(problems({ ...withoutPassword, DOSSIER_AUTH: "oidc" })).toEqual([
+      expect.stringMatching(/^DOSSIER_OIDC_ISSUER is not set\./),
+      expect.stringMatching(/^DOSSIER_OIDC_CLIENT_ID is not set\./),
+      expect.stringMatching(/^DOSSIER_OIDC_CLIENT_SECRET is not set\./),
+    ]);
+    expect(problems({ ...valid, DOSSIER_ALLOW_INSECURE_LOGIN: "yes" })).toEqual([
+      'DOSSIER_ALLOW_INSECURE_LOGIN must be true or false (got "yes").',
+    ]);
+  });
+
+  it("reads secrets from <NAME>_FILE, without the trailing newline", () => {
+    const files: Record<string, string> = { "/run/secrets/secret": "s".repeat(32) + "\n" };
+    const read = (file: string) => {
+      if (!(file in files)) throw new Error("ENOENT");
+      return files[file];
+    };
+    expect(readSecretFiles({ DOSSIER_SECRET_FILE: "/run/secrets/secret" }, read)).toMatchObject({ DOSSIER_SECRET: "s".repeat(32) });
+    // The variable itself wins.
+    expect(readSecretFiles({ DOSSIER_SECRET: "x", DOSSIER_SECRET_FILE: "/run/secrets/secret" }, read).DOSSIER_SECRET).toBe("x");
+    expect(() => readSecretFiles({ DATABASE_URL_FILE: "/missing" }, read)).toThrow(EnvError);
   });
 
   it("wants a hash of the password, not the password itself", () => {

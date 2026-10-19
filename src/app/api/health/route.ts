@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { prisma } from "@/lib/prisma";
+import { systemPrisma as prisma } from "@/lib/prisma";
 import { appVersion } from "@/lib/version";
 
 /** A database that doesn't answer within this counts as down. */

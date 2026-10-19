@@ -12,6 +12,8 @@ import { emailParts } from "@/lib/application-email";
 import { logServerError } from "@/lib/log";
 import { prisma } from "@/lib/prisma";
 import { loadSettings } from "@/lib/settings-data";
+import { currentTenant } from "@/lib/tenant";
+import { forEachTenant } from "@/lib/tenants";
 import { lastKnownTimeZone } from "@/lib/time-zone";
 
 import { googleConnection, loadGoogleAccount } from "./account";
@@ -193,45 +195,56 @@ export async function readReply(emailId: string, signal?: AbortSignal): Promise<
   });
 }
 
-const globalForSync = globalThis as unknown as { inboxTimer?: ReturnType<typeof setTimeout>; inboxRunning?: boolean };
+const globalForSync = globalThis as unknown as {
+  inboxTimer?: ReturnType<typeof setInterval>;
+  /** Users whose check is running now. */
+  inboxChecking?: Set<string>;
+  /** When each user's last scheduled check started. */
+  inboxLastRun?: Map<string, number>;
+};
+const checking = (globalForSync.inboxChecking ??= new Set());
+const lastRun = (globalForSync.inboxLastRun ??= new Map());
+
+/** How often the timer looks at whose check is due. */
+const TICK_MS = 60_000;
 
 /** One scheduled check: interviews changed in Google Calendar, then new mail while reading is on. */
-async function scheduledCheck(): Promise<void> {
-  if (globalForSync.inboxRunning) return;
+async function scheduledCheck(tenant: string, now = Date.now()): Promise<void> {
+  if (checking.has(tenant)) return;
   const [connection, settings] = await Promise.all([googleConnection(), loadSettings()]);
   if (connection.status !== "connected") return;
-  globalForSync.inboxRunning = true;
+  // Every "Check for new mail every" minutes, counted from the server's start.
+  const last = lastRun.get(tenant);
+  if (last === undefined) lastRun.set(tenant, now);
+  if (last === undefined || now - last < settings.gmailInterval * 60_000) return;
+  lastRun.set(tenant, now);
+  checking.add(tenant);
   try {
     // Interviews moved or deleted in Google Calendar, whether or not mail is read.
     await pullInterviewEvents().catch((error) => logServerError("calendar check", error));
     if (connection.canRead && settings.gmailRead) await syncInbox();
   } finally {
-    globalForSync.inboxRunning = false;
+    checking.delete(tenant);
   }
 }
 
 /** Runs a check now unless one is running; for "Check now". */
 export async function checkInboxNow(): Promise<SyncResult | null> {
-  if (globalForSync.inboxRunning) return null;
-  globalForSync.inboxRunning = true;
+  const tenant = currentTenant();
+  if (checking.has(tenant)) return null;
+  checking.add(tenant);
   try {
     return await syncInbox();
   } finally {
-    globalForSync.inboxRunning = false;
+    checking.delete(tenant);
   }
 }
 
-/** Starts the inbox timer, once per process (dev reloads keep the one they have). */
+/** Starts the inbox timer, once per process (dev reloads keep the one they have); it checks each user in turn. */
 export function startInboxSchedule(): void {
   if (globalForSync.inboxTimer) return;
-  const schedule = async () => {
-    const minutes = (await loadSettings().catch(() => null))?.gmailInterval ?? 10;
-    globalForSync.inboxTimer = setTimeout(() => {
-      void scheduledCheck()
-        .catch(() => {})
-        .finally(() => void schedule());
-    }, minutes * 60_000);
-    globalForSync.inboxTimer.unref?.();
-  };
-  void schedule();
+  globalForSync.inboxTimer = setInterval(() => {
+    void forEachTenant("inbox check", (tenant) => scheduledCheck(tenant)).catch(() => {});
+  }, TICK_MS);
+  globalForSync.inboxTimer.unref?.();
 }

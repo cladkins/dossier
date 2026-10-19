@@ -10,6 +10,8 @@ import { GET as getJobState } from "../route";
 import { GET } from "./route";
 
 const db = vi.hoisted(() => ({ client: undefined as ReturnType<typeof createTestClient> | undefined }));
+// One user, as with password sign-in.
+vi.mock("@/lib/auth/mode", () => ({ authMode: () => "password" }));
 vi.mock("@/lib/prisma", async () => {
   const { createTestClient } = await import("@/test/db");
   db.client = createTestClient();
@@ -63,7 +65,7 @@ async function readEvents(response: Response): Promise<{ status: string; step: s
 beforeEach(async () => {
   newGate();
   await resetDatabase(db.client!);
-  vi.mocked(getSession).mockResolvedValue({ persistent: false, issuedAt: new Date(), expiresAt: new Date(Date.now() + 60_000) });
+  vi.mocked(getSession).mockResolvedValue({ persistent: false, tenant: "default", issuedAt: new Date(), expiresAt: new Date(Date.now() + 60_000) });
 });
 afterAll(() => db.client!.$disconnect());
 

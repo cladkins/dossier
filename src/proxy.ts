@@ -3,7 +3,11 @@ import { NextResponse, type NextRequest } from "next/server";
 import { decodeSession, SESSION_COOKIE, sessionTokenOptions } from "@/lib/auth/session";
 import { contentSecurityPolicy, createNonce } from "@/lib/csp";
 import { messages } from "@/lib/messages";
-import { PRINT_TOKEN_HEADER, verifyPrintToken } from "@/lib/pdf/print-token";
+import { PRINT_TOKEN_HEADER, printTokenTenant } from "@/lib/pdf/print-token";
+import { signTenantHeader, TENANT_HEADER } from "@/lib/tenant";
+
+/** Where an OIDC sign-in starts and comes back to, reachable signed out. */
+const PUBLIC_PATHS = new Set(["/login", "/api/auth/login", "/api/auth/callback"]);
 
 /**
  * Sends signed-out visitors to /login before a page renders (PRD AUTH-1),
@@ -11,28 +15,29 @@ import { PRINT_TOKEN_HEADER, verifyPrintToken } from "@/lib/pdf/print-token";
  * is only the optimistic one (a valid, unexpired cookie; no database): pages,
  * layouts, actions and route handlers still check the session themselves, so
  * a matcher mistake can't expose data.
+ *
+ * It also tells the rest of the app whose database to use: the session's
+ * tenant goes on the request in TENANT_HEADER, signed (see src/lib/tenant.ts).
  */
 export async function proxy(request: NextRequest) {
   const { pathname, search } = request.nextUrl;
-  if (pathname === "/login") return pass(request);
+  if (PUBLIC_PATHS.has(pathname)) return pass(request, null);
 
   const session = await decodeSession(
     request.cookies.get(SESSION_COOKIE)?.value,
     sessionTokenOptions(),
   );
-  if (session) return pass(request);
+  if (session) return pass(request, session.tenant);
 
   // Server Actions answer a signed-out call with a friendly error themselves
   // (see action()); a redirect here would break their response.
-  if (request.headers.has("next-action")) return pass(request);
+  if (request.headers.has("next-action")) return pass(request, null);
 
   // The PDF renderer's headless Chromium opens print pages with a token
   // instead of a cookie; the page checks it again.
-  if (
-    pathname.startsWith("/print/") &&
-    (await verifyPrintToken(request.headers.get(PRINT_TOKEN_HEADER), pathname))
-  ) {
-    return pass(request);
+  if (pathname.startsWith("/print/")) {
+    const tenant = await printTokenTenant(request.headers.get(PRINT_TOKEN_HEADER), pathname);
+    if (tenant) return pass(request, tenant);
   }
   if (pathname.startsWith("/api/")) {
     return NextResponse.json({ error: messages.signedOut }, { status: 401 });
@@ -44,16 +49,19 @@ export async function proxy(request: NextRequest) {
 }
 
 /**
- * Lets the request through. Pages get the policy on the response, and on the
- * request too: that's where Next.js finds the nonce for its scripts. API
- * answers (JSON, files) need none.
+ * Lets the request through, as `tenant` (or nobody). A TENANT_HEADER the
+ * browser sent is always dropped. Pages get the policy on the response, and
+ * on the request too: that's where Next.js finds the nonce for its scripts.
+ * API answers (JSON, files) need none.
  */
-function pass(request: NextRequest): NextResponse {
-  if (request.nextUrl.pathname.startsWith("/api/")) return NextResponse.next();
+function pass(request: NextRequest, tenant: string | null): NextResponse {
+  const headers = new Headers(request.headers);
+  headers.delete(TENANT_HEADER);
+  if (tenant) headers.set(TENANT_HEADER, signTenantHeader(tenant));
+  if (request.nextUrl.pathname.startsWith("/api/")) return NextResponse.next({ request: { headers } });
   // Behind a reverse proxy that ends TLS, only the forwarded header knows.
   const protocol = request.headers.get("x-forwarded-proto")?.split(",")[0].trim() ?? request.nextUrl.protocol.replace(/:$/, "");
   const policy = contentSecurityPolicy(createNonce(), { dev: process.env.NODE_ENV === "development", https: protocol === "https" });
-  const headers = new Headers(request.headers);
   headers.set("content-security-policy", policy);
   const response = NextResponse.next({ request: { headers } });
   response.headers.set("content-security-policy", policy);

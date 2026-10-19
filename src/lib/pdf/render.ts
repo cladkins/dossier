@@ -2,6 +2,8 @@ import "server-only";
 
 import { chromium, type Browser } from "playwright-core";
 
+import { currentTenant } from "@/lib/tenant";
+
 import { PRINT_TOKEN_HEADER, signPrintToken } from "./print-token";
 
 // PDFs are printed by headless Chromium from the app's own print pages, so
@@ -89,11 +91,13 @@ function release(): void {
  * blocked, so fonts come from the bundle and nothing leaves the server.
  */
 export async function renderPdf(path: string): Promise<Uint8Array> {
+  // The print page reads the data of whoever asked for the PDF.
+  const tenant = currentTenant();
   await acquire();
   try {
     const origin = appOrigin();
     const context = await (await browser()).newContext({
-      extraHTTPHeaders: { [PRINT_TOKEN_HEADER]: await signPrintToken(path) },
+      extraHTTPHeaders: { [PRINT_TOKEN_HEADER]: await signPrintToken(path, undefined, tenant) },
     });
     try {
       await context.route("**/*", (route) =>
