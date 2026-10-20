@@ -64,7 +64,7 @@ services:
     # Only on the server itself: put a reverse proxy with HTTPS in front.
     ports:
       # 38470 rather than the common 3000; the app still listens on 3000 inside.
-      - "127.0.0.1:${DOSSIER_PORT:-38470}:3000"
+      - "38470:3000"
     volumes:
       - data:/data
     # Room for Chromium, which prints the PDFs.
