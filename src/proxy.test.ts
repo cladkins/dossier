@@ -135,6 +135,19 @@ describe("proxy", () => {
     expect(getRedirectUrl(await proxy(request("/", { headers: { "x-authentik-username": " " } })))).toBe("http://localhost:3000/login");
   });
 
+  it("lets the Claude connector's endpoint, sign-in and metadata through without Authentik (#221)", async () => {
+    for (const path of ["/api/mcp", "/api/oauth/token", "/api/oauth/register", "/.well-known/oauth-authorization-server", "/.well-known/oauth-protected-resource/api/mcp"]) {
+      const response = await proxy(request(path, { headers: { [TENANT_HEADER]: `${samTenant}.forged` } }));
+      expect(response.headers.get("x-middleware-next"), path).toBe("1");
+      // As nobody: the token says who it's for, not a header.
+      expect(response.headers.get(`x-middleware-request-${TENANT_HEADER}`) ?? "", path).toBe("");
+    }
+    // The consent page is an ordinary page: through Authentik first.
+    expect(getRedirectUrl(await proxy(request("/oauth/authorize?client_id=x")))).toBe("http://localhost:3000/login");
+    expect(passedTenant(await proxy(request("/oauth/authorize?client_id=x", { headers: sam })))).toBe(samTenant);
+    expect((await proxy(request("/api/mcpx"))).status).toBe(401);
+  });
+
   it("answers API requests without a user with 401 JSON instead of a redirect", async () => {
     const response = await proxy(request("/api/pdf/1"));
     expect(response.status).toBe(401);

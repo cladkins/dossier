@@ -7,7 +7,7 @@ import { createTestClient, resetDatabase } from "@/test/db";
 import { seedBuiltIns } from "../../prisma/seed/built-ins";
 import { seedDemo } from "../../prisma/seed/demo";
 
-import { buildExport, EXPORT_SCHEMA_VERSION } from "./data-export";
+import { buildExport, EXPORT_SCHEMA_VERSION, exportSchema } from "./data-export";
 import { currentSummary, importExport, parseExport } from "./data-import";
 
 vi.mock("@/lib/env", () => ({ env: { DOSSIER_SECRET: "s".repeat(32) } }));
@@ -46,6 +46,8 @@ describe("importExport (E10-6)", () => {
 
     // Things change after the export…
     await prisma().application.deleteMany({ where: { company: "Oaken Studio" } });
+    await prisma().project.deleteMany();
+    await prisma().fact.deleteMany();
     await prisma().skill.create({ data: { name: "Kubernetes" } });
     await prisma().setting.upsert({ where: { key: "paper" }, create: { key: "paper", value: "LETTER" }, update: { value: "LETTER" } });
     await prisma().theme.create({ data: { id: "later", name: "Later", headFont: "GEIST", bodyFont: "GEIST", accent: "#000000" } });
@@ -55,6 +57,8 @@ describe("importExport (E10-6)", () => {
     expect(await snapshot()).toBe(before);
     expect(await prisma().documentVersion.count()).toBe(1);
     expect(await prisma().theme.count({ where: { builtIn: true } })).toBe(12);
+    expect(await prisma().projectSkill.count()).toBe(3);
+    expect(await prisma().fact.count()).toBe(3);
   });
 
   it("keeps the next interview's date, and reads older files without it (E9-9)", async () => {
@@ -90,21 +94,28 @@ describe("importExport (E10-6)", () => {
     expect(decryptApiKey(saved.value, secret)).toBe("sk-current");
   });
 
-  it("keeps this install's usage ping ID and day, whatever the file says", async () => {
+  it("keeps this install's usage ping ID, day and answer, whatever the file says", async () => {
     const file = await asFile();
     await prisma().setting.createMany({
       data: [
         { key: "usagePingId", value: "6f1c0e5a-9b1d-4c3e-8f2a-1d2e3f4a5b6c" },
         { key: "usagePingDay", value: "2026-09-28" },
+        { key: "usagePingChoice", value: "on" },
+        { key: "usagePingChoiceAt", value: "2026-10-20T08:00:00.000Z" },
+        { key: "usagePingChoiceText", value: "1" },
       ],
     });
     const fromElsewhere = [
       { key: "usagePingId", value: "00000000-0000-4000-8000-000000000000" },
       { key: "usagePingDay", value: "2026-01-01" },
+      { key: "usagePingChoice", value: "off" },
     ];
     await importExport(prisma(), { ...file, settings: [...file.settings, ...fromElsewhere] });
     const kept = await prisma().setting.findMany({ where: { key: { startsWith: "usagePing" } }, orderBy: { key: "asc" } });
     expect(kept.map(({ key, value }) => ({ key, value }))).toEqual([
+      { key: "usagePingChoice", value: "on" },
+      { key: "usagePingChoiceAt", value: "2026-10-20T08:00:00.000Z" },
+      { key: "usagePingChoiceText", value: "1" },
       { key: "usagePingDay", value: "2026-09-28" },
       { key: "usagePingId", value: "6f1c0e5a-9b1d-4c3e-8f2a-1d2e3f4a5b6c" },
     ]);
@@ -151,6 +162,138 @@ describe("importExport (E10-6)", () => {
       next: "cursor:2",
       createdAt: now,
     });
+  });
+
+  it("restores the job agent's candidates and drafts, so what it saw stays seen (E16)", async () => {
+    const draft = await prisma().application.create({ data: { title: "Agent draft", origin: "AGENT", agentScore: 88, awaitingReview: true } });
+    await prisma().agentCandidate.create({
+      data: { source: "JSEARCH", externalId: "job-1", title: "Data Scientist", score: 88, reasons: ["Python"], status: "DRAFTED", applicationId: draft.id, dedupeKey: "key-1" },
+    });
+    await prisma().agentCandidate.create({ data: { source: "ADZUNA", externalId: "az-1", title: "Gone", status: "DISMISSED", dedupeKey: "key-2" } });
+    const file = await asFile();
+    expect(file.agentCandidates).toHaveLength(2);
+    expect(file.applications.find((application) => application.id === draft.id)).toMatchObject({ origin: "AGENT", agentScore: 88, awaitingReview: true });
+
+    await prisma().agentCandidate.deleteMany();
+    // A score is made again from the profile, so it's neither exported nor kept by an import (#208).
+    await prisma().postingScore.create({ data: { source: "JSEARCH", externalId: "job-1", score: 80, reasons: [], redFlags: [], scoredWith: "score-posting@1" } });
+    expect(JSON.stringify(file)).not.toContain("scoredWith");
+    await importExport(prisma(), file);
+    expect(await prisma().postingScore.count()).toBe(0);
+    expect(await prisma().agentCandidate.findMany({ orderBy: { externalId: "asc" }, select: { externalId: true, status: true, applicationId: true, reasons: true } })).toEqual([
+      { externalId: "az-1", status: "DISMISSED", applicationId: null, reasons: null },
+      { externalId: "job-1", status: "DRAFTED", applicationId: draft.id, reasons: ["Python"] },
+    ]);
+    expect(await prisma().application.findUniqueOrThrow({ where: { id: draft.id } })).toMatchObject({ origin: "AGENT", awaitingReview: true });
+
+    // Files from before the agent have none, and their applications are the user's own.
+    const older = JSON.parse(JSON.stringify(file));
+    delete older.agentCandidates;
+    for (const application of older.applications) for (const key of ["origin", "agentScore", "awaitingReview"]) delete application[key];
+    const parsed = parseExport(JSON.stringify(older));
+    expect(parsed).toMatchObject({ ok: true, data: { agentCandidates: [] } });
+    if (!parsed.ok) return;
+    await importExport(prisma(), parsed.data);
+    expect(await prisma().agentCandidate.count()).toBe(0);
+    expect(await prisma().application.findUniqueOrThrow({ where: { id: draft.id } })).toMatchObject({ origin: "MANUAL", awaitingReview: false });
+  });
+
+  it("restores Startups with what the user did with them, and reads files from before them as having none (#222)", async () => {
+    const application = await prisma().application.create({ data: { title: "Android · Acme" } });
+    const emails = [{ email: "jobs@acme.example", label: "Hiring", from: "https://acme.example/careers", onRequest: false, foundAt: "2026-10-01T00:00:00.000Z" }];
+    await prisma().startup.create({
+      data: { source: "HN", externalId: "1", company: "Acme", roles: ["Engineer"], emails, links: [], reasons: ["In Berlin"], status: "SAVED", notes: "Ask about Compose", applicationId: application.id },
+    });
+    await prisma().startup.create({ data: { source: "YC", externalId: "2", company: "Gone", roles: [], emails: [], links: [], reasons: [], status: "DISMISSED" } });
+    await prisma().startupBlock.create({ data: { hash: "b".repeat(64) } });
+    const select = { externalId: true, status: true, notes: true, emails: true, roles: true, applicationId: true } as const;
+    const before = await prisma().startup.findMany({ orderBy: { externalId: "asc" }, select });
+    const file = await asFile();
+    expect(file.startups).toHaveLength(2);
+
+    await importExport(prisma(), file);
+    expect(await prisma().startup.findMany({ orderBy: { externalId: "asc" }, select })).toEqual(before);
+    expect(await prisma().startupBlock.count()).toBe(1);
+
+    // An application that isn't in the file leaves its startup unlinked; older files have no startups.
+    const unlinked = JSON.parse(JSON.stringify(file));
+    unlinked.applications = unlinked.applications.filter((entry: { id: string }) => entry.id !== application.id);
+    await importExport(prisma(), exportSchema.parse(unlinked));
+    expect((await prisma().startup.findFirstOrThrow({ where: { externalId: "1" } })).applicationId).toBeNull();
+    const older = JSON.parse(JSON.stringify(file));
+    delete older.startups;
+    delete older.startupBlocks;
+    const parsed = parseExport(JSON.stringify(older));
+    expect(parsed).toMatchObject({ ok: true, data: { startups: [], startupBlocks: [] } });
+    if (!parsed.ok) return;
+    await importExport(prisma(), parsed.data);
+    expect(await prisma().startup.count()).toBe(0);
+  });
+
+  it("reads files from before projects as having none (PRO-13)", async () => {
+    const file = JSON.parse(JSON.stringify(await buildExport(prisma(), { now })));
+    const parsed = parseExport(JSON.stringify({ ...file, schemaVersion: 2, profile: { ...file.profile, projects: undefined } }));
+    expect(parsed).toMatchObject({ ok: true, data: { schemaVersion: 2, profile: { projects: [] } } });
+    if (!parsed.ok) return;
+    await importExport(prisma(), parsed.data);
+    expect(await prisma().project.count()).toBe(0);
+  });
+
+  it("restores publications, and reads files from before them as having none (#218)", async () => {
+    await prisma().publication.updateMany({ data: { onResumes: false } });
+    const file = JSON.parse(JSON.stringify(await buildExport(prisma(), { now })));
+    const before = await prisma().publication.findMany();
+    await importExport(prisma(), exportSchema.parse(file));
+    expect(await prisma().publication.findMany()).toEqual(before);
+
+    const parsed = parseExport(JSON.stringify({ ...file, schemaVersion: 4, profile: { ...file.profile, publications: undefined } }));
+    expect(parsed).toMatchObject({ ok: true, data: { schemaVersion: 4, profile: { publications: [] } } });
+    if (!parsed.ok) return;
+    await importExport(prisma(), parsed.data);
+    expect(await prisma().publication.count()).toBe(0);
+  });
+
+  it("restores the photo, the themes' photo options and each application's Photo switch, and reads older files with the defaults (#224)", async () => {
+    const png = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
+    await prisma().profileField.createMany({ data: [{ key: "photo", value: png }, { key: "photoOnResumes", value: "false" }] });
+    await prisma().theme.update({ where: { id: "mine" }, data: { photoShape: "PORTRAIT", photoPosition: "SIDEBAR" } });
+    await prisma().application.updateMany({ where: { company: "Ledgerly" }, data: { showPhoto: true } });
+    const file = JSON.parse(JSON.stringify(await buildExport(prisma(), { now })));
+
+    await prisma().profileField.deleteMany({ where: { key: { startsWith: "photo" } } });
+    await importExport(prisma(), exportSchema.parse(file));
+    const fields = await prisma().profileField.findMany({ where: { key: { startsWith: "photo" } }, orderBy: { key: "asc" } });
+    expect(fields.map(({ key, value }) => [key, value])).toEqual([["photo", png], ["photoOnResumes", "false"]]);
+    expect(await prisma().theme.findUniqueOrThrow({ where: { id: "mine" } })).toMatchObject({ photoShape: "PORTRAIT", photoPosition: "SIDEBAR" });
+    expect(await prisma().application.findFirstOrThrow({ where: { company: "Ledgerly" } })).toMatchObject({ showPhoto: true });
+
+    const older = {
+      ...file,
+      themes: file.themes.map((theme: object) => ({ ...theme, photoShape: undefined, photoPosition: undefined })),
+      applications: file.applications.map((application: object) => ({ ...application, showPhoto: undefined })),
+    };
+    await importExport(prisma(), exportSchema.parse(older));
+    expect(await prisma().theme.findUniqueOrThrow({ where: { id: "mine" } })).toMatchObject({ photoShape: "CIRCLE", photoPosition: "HEADER_END" });
+    expect(await prisma().application.findFirstOrThrow({ where: { company: "Ledgerly" } })).toMatchObject({ showPhoto: null });
+  });
+
+  it("reads files from before facts, with an application's note as its first fact (PRO-14, APP-15)", async () => {
+    const file = JSON.parse(JSON.stringify(await buildExport(prisma(), { now })));
+    const [first, ...rest] = file.applications;
+    const old = {
+      ...file,
+      schemaVersion: 3,
+      profile: { ...file.profile, facts: undefined },
+      applications: [
+        { ...first, facts: undefined, userNote: "  Relocating in January.  " },
+        ...rest.map((application: object) => ({ ...application, facts: undefined, userNote: "" })),
+      ],
+    };
+    const parsed = parseExport(JSON.stringify(old));
+    expect(parsed).toMatchObject({ ok: true, data: { schemaVersion: 3, profile: { facts: [] } } });
+    if (!parsed.ok) return;
+    await importExport(prisma(), parsed.data);
+    expect(await prisma().fact.findMany({ select: { applicationId: true, text: true } })).toEqual([{ applicationId: first.id, text: "Relocating in January." }]);
   });
 
   it("reads version 1 files, which have no postings", async () => {

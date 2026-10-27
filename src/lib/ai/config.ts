@@ -25,12 +25,17 @@ export const PROVIDER_DEFAULTS: Record<AiProvider, { baseUrl: string; model: str
   [AiProvider.LOCAL]: { baseUrl: "http://localhost:11434", model: null, timeoutSeconds: 300 },
   [AiProvider.OPENAI]: { baseUrl: "https://api.openai.com/v1", model: null, timeoutSeconds: 120 },
   [AiProvider.ANTHROPIC]: { baseUrl: "https://api.anthropic.com", model: "claude-sonnet-5", timeoutSeconds: 120 },
+  [AiProvider.MISTRAL]: { baseUrl: "https://api.mistral.ai/v1", model: "mistral-medium-latest", timeoutSeconds: 120 },
+  // As generous as a local model, and loading one can take a while too.
+  [AiProvider.LMSTUDIO]: { baseUrl: "http://host.docker.internal:1234", model: null, timeoutSeconds: 300 },
 };
 
 const FROM_ENV: Record<NonNullable<Env["DOSSIER_AI_PROVIDER"]>, AiProvider> = {
   local: AiProvider.LOCAL,
   openai: AiProvider.OPENAI,
   anthropic: AiProvider.ANTHROPIC,
+  mistral: AiProvider.MISTRAL,
+  lmstudio: AiProvider.LMSTUDIO,
 };
 
 type SavedSettings = {
@@ -109,4 +114,18 @@ export function keyStateOf(saved: { provider: AiProvider | null; apiKeyEnc: stri
 export async function isAiConfigured(): Promise<boolean> {
   if (env.DOSSIER_AI_PROVIDER) return true;
   return Boolean((await loadSettings()).provider);
+}
+
+/**
+ * Whether Dossier's own AI model can be called: a provider with its model,
+ * and a key for the hosted ones that always need one. Without it, and with
+ * the Claude connector on, the AI buttons hand the work to Claude chat
+ * (src/lib/connector/handoff.ts, #221).
+ */
+export async function isAiUsable(): Promise<boolean> {
+  if (!(await isAiConfigured())) return false;
+  const config = await loadAiConfig();
+  if (!config.model || config.apiKeyProblem) return false;
+  const needsKey = config.provider === AiProvider.ANTHROPIC || config.provider === AiProvider.MISTRAL;
+  return !needsKey || Boolean(config.apiKey);
 }

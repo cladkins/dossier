@@ -4,38 +4,38 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, useTransition, type FormEvent } from "react";
 
+import { ArbeitsagenturNote } from "@/components/arbeitsagentur-note";
 import { PageHeader } from "@/components/page-header";
-import { toast } from "@/components/toast";
+import { toast, toastResult } from "@/components/toast";
 import { Button, buttonClassName } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Input } from "@/components/ui/input";
-import { Select } from "@/components/ui/select";
 import { cn } from "@/lib/cn";
 import type { Country } from "@/lib/job-search/countries";
 import {
-  POSTED_WITHIN,
-  RADII_KM,
   searchHref,
   searchRunHref,
   viewHref,
   type JobSource,
   type JobsView,
   type PastSearchDay,
-  type RadiusKm,
   type SearchProblem as Problem,
   type SearchQuery,
   type ShownPosting,
   type StoredSearch,
 } from "@/lib/job-search/search";
-import { SOURCE_INFO, sourceCovers } from "@/lib/job-search/sources";
+import { SOURCE_INFO } from "@/lib/job-search/sources";
 
-import { runJobSearch } from "./actions";
+import { acceptArbeitsagenturNote, runJobSearch } from "./actions";
 import { PastSearches } from "./past-searches";
 import { PostingResults } from "./posting-results";
+import { RemoteOnlyField, SearchFields, uncoveredCountry } from "./search-fields";
 
 export type JobsScreenProps = {
   /** The source chosen in Settings; null while job search is off. */
   source: JobSource | null;
+  /** The Bundesagentur für Arbeit is chosen, but its note isn't accepted yet: it isn't searched until then (#223). */
+  arbeitsagenturNote?: boolean;
+  /** Score opens a Claude chat, which scores through the connector (#221). */
+  scoreInClaude?: boolean;
   /** Every country by name, named on the server. */
   countries: readonly Country[];
   /** The search, past searches, or the Saved or Dismissed postings. */
@@ -59,7 +59,20 @@ export type JobsScreenProps = {
 const SETTINGS_HREF = "/settings?section=jobs";
 
 /** Find jobs (E14-6, E14-7, E14-10): the search form and a kept search's postings, past searches, or the postings kept from them. */
-export function JobsScreen({ source, countries, view, query, search, missingSearch = false, kept = [], history = [], counts, today }: JobsScreenProps) {
+export function JobsScreen({
+  source,
+  arbeitsagenturNote = false,
+  scoreInClaude = false,
+  countries,
+  view,
+  query,
+  search,
+  missingSearch = false,
+  kept = [],
+  history = [],
+  counts,
+  today,
+}: JobsScreenProps) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   // A search that didn't work, with what was asked, for Try again.
@@ -87,7 +100,7 @@ export function JobsScreen({ source, countries, view, query, search, missingSear
     return (
       <>
         {header}
-        <PostingResults key={view} mode={view} postings={kept} today={today} />
+        <PostingResults key={view} mode={view} postings={kept} today={today} scoreInClaude={scoreInClaude} />
       </>
     );
   }
@@ -111,9 +124,19 @@ export function JobsScreen({ source, countries, view, query, search, missingSear
       router.push(searchRunHref(result.data.id), { scroll: false });
     });
 
+  const acceptArbeitsagentur = async () => {
+    const result = toastResult(await acceptArbeitsagenturNote({}));
+    if (result.ok) {
+      setFailed(null);
+      router.refresh();
+    }
+    return result.ok;
+  };
+
   return (
     <>
       {header}
+      {arbeitsagenturNote && <ArbeitsagenturNote accepted={false} onAccept={acceptArbeitsagentur} className="mx-10 mb-5 max-w-[760px]" />}
       <SearchForm source={source} countries={countries} query={query} pending={pending} onSearch={run} />
       {/* Announces each new set of results; the list itself is replaced. */}
       <p role="status" className="sr-only">
@@ -123,7 +146,15 @@ export function JobsScreen({ source, countries, view, query, search, missingSear
         {failed ? (
           <SearchProblem problem={failed.problem.problem} message={failed.problem.message} onRetry={() => run(failed.query)} />
         ) : search ? (
-          <PostingResults key={search.id} mode="search" search={search} today={today} onSearchAgain={() => run(search.query)} searching={pending} />
+          <PostingResults
+            key={search.id}
+            mode="search"
+            search={search}
+            today={today}
+            scoreInClaude={scoreInClaude}
+            onSearchAgain={() => run(search.query)}
+            searching={pending}
+          />
         ) : (
           <p className="px-10 pb-16 text-sm text-muted">
             {missingSearch
@@ -160,8 +191,7 @@ function SearchForm({
   }
 
   const set = (patch: Partial<SearchQuery>) => setForm((current) => ({ ...current, ...patch }));
-  const countryName = countries.find((country) => country.code === form.country)?.name ?? form.country.toUpperCase();
-  const uncovered = form.country && !sourceCovers(source, form.country) ? `${SOURCE_INFO[source].name} doesn't list jobs in ${countryName}.` : undefined;
+  const uncovered = uncoveredCountry(source, form, countries);
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
@@ -183,50 +213,9 @@ function SearchForm({
       onSubmit={submit}
       className="mx-10 mb-7 grid grid-cols-1 items-start gap-x-4 gap-y-4 rounded-panel border border-line-card bg-card p-6 sm:grid-cols-2 lg:grid-cols-[2fr_1.5fr_1.3fr_1fr_1fr]"
     >
-      <Input
-        label="What"
-        className="sm:col-span-2 lg:col-span-1"
-        value={form.keywords}
-        placeholder="Job title, skill or company"
-        error={errors.keywords}
-        onChange={(event) => set({ keywords: event.target.value })}
-      />
-      <Input label="Where" value={form.place} placeholder="City or region" onChange={(event) => set({ place: event.target.value })} />
-      <Select label="Country" value={form.country} error={errors.country ?? uncovered} onChange={(event) => set({ country: event.target.value })}>
-        <option value="">Choose a country</option>
-        {countries.map((country) => (
-          <option key={country.code} value={country.code}>
-            {country.name}
-          </option>
-        ))}
-      </Select>
-      <Select
-        label="Within"
-        value={String(form.radiusKm)}
-        disabled={!form.place.trim()}
-        hint={form.place.trim() ? undefined : "Add a place first"}
-        onChange={(event) => set({ radiusKm: Number(event.target.value) as RadiusKm })}
-      >
-        {RADII_KM.map((km) => (
-          <option key={km} value={km}>
-            {km} km
-          </option>
-        ))}
-      </Select>
-      <Select label="Posted" value={form.postedWithin} onChange={(event) => set({ postedWithin: event.target.value as SearchQuery["postedWithin"] })}>
-        {POSTED_WITHIN.map((option) => (
-          <option key={option.value} value={option.value}>
-            {option.label}
-          </option>
-        ))}
-      </Select>
+      <SearchFields value={form} onChange={set} source={source} countries={countries} errors={errors} />
       <div className="flex flex-wrap items-center justify-between gap-4 sm:col-span-2 lg:col-span-5">
-        <Checkbox
-          label="Remote only"
-          checked={form.remoteOnly}
-          onChange={(event) => set({ remoteOnly: event.target.checked })}
-          hint={source === "ADZUNA" && form.remoteOnly ? "Adzuna has no remote filter, so this adds “remote” to your search." : undefined}
-        />
+        <RemoteOnlyField value={form} onChange={set} source={source} />
         <Button type="submit" aria-disabled={pending || undefined}>
           {pending ? "Searching…" : "Search"}
         </Button>
@@ -270,8 +259,8 @@ function NoSource() {
     <div className="mx-10 mb-16 flex max-w-[640px] flex-col items-start gap-3 rounded-panel border border-line-card bg-card px-7 py-7">
       <h2 className="font-serif text-section">Choose where to search</h2>
       <p className="text-sm text-muted">
-        Find jobs searches one job source for you: JSearch (LinkedIn, Indeed and more), Adzuna, or Germany&apos;s Bundesagentur für Arbeit. Pick
-        one in Settings. Until then, nothing is sent anywhere.
+        Find jobs searches one job source for you, such as JSearch (LinkedIn, Indeed and more) or Adzuna. Pick one in Settings. Until then,
+        nothing is sent anywhere.
       </p>
       <Link href={SETTINGS_HREF} className={buttonClassName("primary", "md", "mt-1 hover:text-on-primary")}>
         Set up job search

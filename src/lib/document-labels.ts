@@ -13,6 +13,8 @@ export type DocumentLabels = {
   locale: string;
   profile: string;
   experience: string;
+  projects: string;
+  publications: string;
   education: string;
   skills: string;
   languages: string;
@@ -47,6 +49,8 @@ const WORDS: Record<string, Words> = {
   en: {
     profile: "Profile",
     experience: "Experience",
+    projects: "Projects",
+    publications: "Publications",
     education: "Education",
     skills: "Skills",
     languages: "Languages",
@@ -62,6 +66,8 @@ const WORDS: Record<string, Words> = {
   nl: {
     profile: "Profiel",
     experience: "Werkervaring",
+    projects: "Projecten",
+    publications: "Publicaties",
     education: "Opleiding",
     skills: "Vaardigheden",
     languages: "Talen",
@@ -76,6 +82,8 @@ const WORDS: Record<string, Words> = {
   de: {
     profile: "Profil",
     experience: "Berufserfahrung",
+    projects: "Projekte",
+    publications: "Publikationen",
     education: "Ausbildung",
     skills: "Kenntnisse",
     languages: "Sprachen",
@@ -90,6 +98,8 @@ const WORDS: Record<string, Words> = {
   fr: {
     profile: "Profil",
     experience: "Expérience professionnelle",
+    projects: "Projets",
+    publications: "Publications",
     education: "Formation",
     skills: "Compétences",
     languages: "Langues",
@@ -104,6 +114,8 @@ const WORDS: Record<string, Words> = {
   es: {
     profile: "Perfil",
     experience: "Experiencia profesional",
+    projects: "Proyectos",
+    publications: "Publicaciones",
     education: "Formación",
     skills: "Habilidades",
     languages: "Idiomas",
@@ -118,6 +130,8 @@ const WORDS: Record<string, Words> = {
   it: {
     profile: "Profilo",
     experience: "Esperienza professionale",
+    projects: "Progetti",
+    publications: "Pubblicazioni",
     education: "Formazione",
     skills: "Competenze",
     languages: "Lingue",
@@ -132,6 +146,8 @@ const WORDS: Record<string, Words> = {
   pt: {
     profile: "Perfil",
     experience: "Experiência profissional",
+    projects: "Projetos",
+    publications: "Publicações",
     education: "Formação",
     skills: "Competências",
     languages: "Idiomas",
@@ -146,6 +162,8 @@ const WORDS: Record<string, Words> = {
   pl: {
     profile: "Profil",
     experience: "Doświadczenie zawodowe",
+    projects: "Projekty",
+    publications: "Publikacje",
     education: "Wykształcenie",
     skills: "Umiejętności",
     languages: "Języki",
@@ -160,6 +178,8 @@ const WORDS: Record<string, Words> = {
   sv: {
     profile: "Profil",
     experience: "Arbetslivserfarenhet",
+    projects: "Projekt",
+    publications: "Publikationer",
     education: "Utbildning",
     skills: "Kompetenser",
     languages: "Språk",
@@ -174,6 +194,8 @@ const WORDS: Record<string, Words> = {
   da: {
     profile: "Profil",
     experience: "Erhvervserfaring",
+    projects: "Projekter",
+    publications: "Publikationer",
     education: "Uddannelse",
     skills: "Kompetencer",
     languages: "Sprog",
@@ -188,6 +210,8 @@ const WORDS: Record<string, Words> = {
   no: {
     profile: "Profil",
     experience: "Arbeidserfaring",
+    projects: "Prosjekter",
+    publications: "Publikasjoner",
     education: "Utdanning",
     skills: "Kompetanse",
     languages: "Språk",
@@ -202,6 +226,8 @@ const WORDS: Record<string, Words> = {
   fi: {
     profile: "Profiili",
     experience: "Työkokemus",
+    projects: "Projektit",
+    publications: "Julkaisut",
     education: "Koulutus",
     skills: "Osaaminen",
     languages: "Kielitaito",
@@ -216,6 +242,8 @@ const WORDS: Record<string, Words> = {
   cs: {
     profile: "Profil",
     experience: "Pracovní zkušenosti",
+    projects: "Projekty",
+    publications: "Publikace",
     education: "Vzdělání",
     skills: "Dovednosti",
     languages: "Jazyky",
@@ -230,6 +258,8 @@ const WORDS: Record<string, Words> = {
   el: {
     profile: "Προφίλ",
     experience: "Επαγγελματική εμπειρία",
+    projects: "Έργα",
+    publications: "Δημοσιεύσεις",
     education: "Εκπαίδευση",
     skills: "Δεξιότητες",
     languages: "Γλώσσες",
@@ -244,6 +274,8 @@ const WORDS: Record<string, Words> = {
   tr: {
     profile: "Profil",
     experience: "İş deneyimi",
+    projects: "Projeler",
+    publications: "Yayınlar",
     education: "Eğitim",
     skills: "Yetkinlikler",
     languages: "Diller",
@@ -258,6 +290,8 @@ const WORDS: Record<string, Words> = {
   ar: {
     profile: "نبذة شخصية",
     experience: "الخبرة المهنية",
+    projects: "المشاريع",
+    publications: "المنشورات",
     education: "التعليم",
     skills: "المهارات",
     languages: "اللغات",
@@ -272,6 +306,8 @@ const WORDS: Record<string, Words> = {
   fa: {
     profile: "درباره من",
     experience: "سوابق کاری",
+    projects: "پروژه‌ها",
+    publications: "انتشارات",
     education: "تحصیلات",
     skills: "مهارت‌ها",
     languages: "زبان‌ها",
@@ -286,6 +322,8 @@ const WORDS: Record<string, Words> = {
   hi: {
     profile: "प्रोफ़ाइल",
     experience: "कार्य अनुभव",
+    projects: "परियोजनाएँ",
+    publications: "प्रकाशन",
     education: "शिक्षा",
     skills: "कौशल",
     languages: "भाषाएँ",
@@ -300,6 +338,8 @@ const WORDS: Record<string, Words> = {
   "zh-Hans": {
     profile: "个人简介",
     experience: "工作经历",
+    projects: "项目经历",
+    publications: "发表论文",
     education: "教育背景",
     skills: "技能",
     languages: "语言能力",
@@ -314,6 +354,8 @@ const WORDS: Record<string, Words> = {
   ja: {
     profile: "プロフィール",
     experience: "職歴",
+    projects: "プロジェクト",
+    publications: "論文・著作",
     education: "学歴",
     skills: "スキル",
     languages: "語学",
@@ -328,6 +370,8 @@ const WORDS: Record<string, Words> = {
   ko: {
     profile: "프로필",
     experience: "경력",
+    projects: "프로젝트",
+    publications: "논문 및 저서",
     education: "학력",
     skills: "기술",
     languages: "언어",

@@ -53,7 +53,9 @@ const profile: ImportedProfile = {
       unverified: ["Acme Payments"],
     },
   ],
+  projects: [],
   education: [],
+  publications: [],
   references: [],
 };
 const done = { id: "job-1", type: "import-profile", status: "DONE", step: null, error: null, result: { profile, readWith: "extract-profile@1" } } as const;
@@ -101,7 +103,7 @@ describe("ProfileImport (E4-10)", () => {
     vi.mocked(useJob).mockReturnValue(done as never);
     render(<ProfileImport keptFor="24 hours" aiReady provider="LOCAL" initialJobId="job-1" />);
     expect(screen.getByRole("heading", { name: "Here's what your resume says" })).toBeInTheDocument();
-    expect(screen.getByText(/^1 role, 0 degrees, 2 skills, 1 language, 0 references\./)).toBeInTheDocument();
+    expect(screen.getByText(/^1 role, 0 projects, 0 degrees, 2 skills, 1 language, 0 references\./)).toBeInTheDocument();
     expect(screen.getByText("John Doe")).toBeInTheDocument();
     expect(screen.getByText("Service design")).toHaveTextContent("Service design check: not in the file");
     expect(screen.getByText("Design Lead · Acme Payments")).toHaveTextContent("check: “Acme Payments” not in the file");

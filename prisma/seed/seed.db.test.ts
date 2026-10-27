@@ -135,12 +135,19 @@ describe("demo seed", () => {
       "Northwind Logistics role",
       "Fieldnote role",
       "Studio Brik role",
+      "Tidewater design tokens project",
       "Skills",
       "MSc Design for Interaction",
       "BA Communication Design",
+      "Publication “Doe, J., & Vermeer, K. (2016). Trust in…”",
       "Languages",
     ]);
+    const [publication] = await db.publication.findMany();
+    expect(resume.find((unit) => unit.id === `publication:${publication.id}`)?.text).toBe(publication.citation);
     expect(resume.find((unit) => unit.id === "skills")?.text).toMatch(/^Design systems · User research · Figma · /);
+    const [project] = await db.project.findMany({ include: { skills: { include: { skill: true } } } });
+    expect(resume.find((unit) => unit.id === `project:${project.id}`)?.text).toBe(project.bullets);
+    expect(project.skills.map((link) => link.skill.name).sort()).toEqual(["Design systems", "Figma", "HTML & CSS"]);
     const education = await db.education.findMany();
     expect(resume.filter((unit) => unit.id.startsWith("education:")).map((unit) => unit.id).sort()).toEqual(
       education.map((entry) => `education:${entry.id}`).sort(),

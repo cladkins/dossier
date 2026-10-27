@@ -1,6 +1,7 @@
 import "server-only";
 
 import type { Prisma, PrismaClient } from "@/generated/prisma/client";
+import { citationText } from "@/lib/citation";
 import { BASICS_FIELDS, sameName } from "@/lib/profile";
 import type { ImportedProfile, ImportMode } from "@/lib/profile-import";
 import { settingsFromRows } from "@/lib/settings";
@@ -12,7 +13,8 @@ type Tx = Prisma.TransactionClient;
  * Applies an imported profile in one transaction (E4-10). Replace clears the
  * profile first. Merge lets the file win (decided 29 September 2026): its
  * basics overwrite the profile's, and an entry it shares with the profile
- * (the same role and company, degree and school, or reference name) takes
+ * (the same role and company, project name, degree and school, citation, or
+ * reference name) takes
  * what the file says; what the file leaves out is kept. Everything else is
  * added, first in a section ordered by hand, else by date.
  */
@@ -21,14 +23,18 @@ export async function applyImportedProfile(db: PrismaClient, profile: ImportedPr
     async (tx) => {
       if (mode === "replace") {
         await tx.experience.deleteMany();
+        await tx.project.deleteMany();
         await tx.education.deleteMany();
+        await tx.publication.deleteMany();
         await tx.reference.deleteMany();
         await tx.language.deleteMany();
         await tx.skill.deleteMany();
         await tx.profileField.deleteMany({ where: { key: { in: [...BASICS_FIELDS] } } });
-        await saveSettings({ experienceOrder: "date", educationOrder: "date" }, tx);
+        await saveSettings({ experienceOrder: "date", projectOrder: "date", educationOrder: "date" }, tx);
       }
-      const order = settingsFromRows(await tx.setting.findMany({ where: { key: { in: ["experienceOrder", "educationOrder"] } } }));
+      const order = settingsFromRows(
+        await tx.setting.findMany({ where: { key: { in: ["experienceOrder", "projectOrder", "educationOrder"] } } }),
+      );
 
       for (const [key, value] of Object.entries(profile.basics)) {
         await tx.profileField.upsert({ where: { key }, create: { key, value }, update: { value } });
@@ -54,12 +60,39 @@ export async function applyImportedProfile(db: PrismaClient, profile: ImportedPr
         }
       }
 
+      const nextProjectSort = await sorter(tx, "project", order.projectOrder === "manual");
+      const known = await tx.project.findMany({ include: { skills: { select: { skillId: true } } } });
+      for (const entry of profile.projects) {
+        const { skills, ...fields } = withoutFlags(entry);
+        const linked = skills.flatMap((name) => skillIds.get(name.toLowerCase()) ?? []);
+        const match = known.find((project) => sameName(project.name, entry.name));
+        if (match) {
+          await tx.project.update({ where: { id: match.id }, data: filled(fields) });
+          const links = new Set(match.skills.map((link) => link.skillId));
+          await tx.projectSkill.createMany({ data: linked.filter((id) => !links.has(id)).map((skillId) => ({ projectId: match.id, skillId })) });
+        } else {
+          await tx.project.create({
+            data: { ...fields, sort: nextProjectSort(), skills: { create: [...new Set(linked)].map((skillId) => ({ skillId })) } },
+          });
+        }
+      }
+
       const nextEducationSort = await sorter(tx, "education", order.educationOrder === "manual");
       const degrees = await tx.education.findMany();
       for (const fields of profile.education.map(withoutFlags)) {
         const match = degrees.find((degree) => sameName(degree.degree, fields.degree) && sameName(degree.school, fields.school));
         if (match) await tx.education.update({ where: { id: match.id }, data: filled(fields) });
         else await tx.education.create({ data: { ...fields, sort: nextEducationSort() } });
+      }
+
+      // Publications are in an order set by hand: the file's go after the ones there, in its order (#218).
+      // One that's already there keeps its citation, which may have bold and italics; the file can give it a link.
+      const publications = await tx.publication.findMany();
+      let publicationSort = ((await tx.publication.aggregate({ _max: { sort: true } }))._max.sort ?? -1) + 1;
+      for (const fields of profile.publications.map(withoutFlags)) {
+        const match = publications.find((publication) => sameName(citationText(publication.citation), citationText(fields.citation)));
+        if (match) await tx.publication.update({ where: { id: match.id }, data: filled({ link: fields.link }) });
+        else await tx.publication.create({ data: { ...fields, sort: publicationSort++ } });
       }
 
       const references = await tx.reference.findMany();
@@ -96,11 +129,14 @@ async function applyLanguages(tx: Tx, profile: ImportedProfile): Promise<void> {
 }
 
 /** Sort values for new entries: first in an order set by hand, else after the rest. */
-async function sorter(tx: Tx, section: "experience" | "education", manual: boolean): Promise<() => number> {
+async function sorter(tx: Tx, section: "experience" | "project" | "education", manual: boolean): Promise<() => number> {
+  const range = { _min: { sort: true }, _max: { sort: true } } as const;
   const { _min, _max } =
     section === "experience"
-      ? await tx.experience.aggregate({ _min: { sort: true }, _max: { sort: true } })
-      : await tx.education.aggregate({ _min: { sort: true }, _max: { sort: true } });
+      ? await tx.experience.aggregate(range)
+      : section === "project"
+        ? await tx.project.aggregate(range)
+        : await tx.education.aggregate(range);
   let first = (_min.sort ?? 1) - 1;
   let last = (_max.sort ?? -1) + 1;
   return manual ? () => first-- : () => last++;

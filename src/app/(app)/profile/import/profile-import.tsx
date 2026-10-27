@@ -11,9 +11,11 @@ import { Card } from "@/components/ui/card";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import type { AiProvider } from "@/generated/prisma/enums";
 import { useJob } from "@/hooks/use-job";
+import { providerOption } from "@/lib/ai/provider-options";
 import { retry } from "@/lib/jobs/actions";
 import type { ImportProfileResult } from "@/lib/jobs/import-profile";
 import { messages } from "@/lib/messages";
+import { citationText } from "@/lib/citation";
 import { BASICS_FIELDS, formatDateRange, languageLevelLabel, type BasicsField } from "@/lib/profile";
 import { IMPORT_PROFILE_STEPS, importCounts, type ImportedProfile, type ImportMode } from "@/lib/profile-import";
 
@@ -133,9 +135,9 @@ export function ProfileImport({
                 </Link>
               </p>
             )}
-            {aiReady && provider !== "LOCAL" && (
+            {aiReady && !providerOption(provider).local && (
               <p role="note" className="rounded-card bg-warning-surface px-4 py-3 text-meta text-warning">
-                The resume&apos;s text, contact details included, is sent to {provider === "ANTHROPIC" ? "Anthropic" : "your AI server"} to sort
+                The resume&apos;s text, contact details included, is sent to {providerOption(provider).vendor ?? "your AI server"} to sort
                 it into your profile.
               </p>
             )}
@@ -194,7 +196,7 @@ export function ProfileImport({
               open={confirmReplace}
               onOpenChange={setConfirmReplace}
               title="Replace your profile?"
-              description="Your basics, skills, languages, roles, education and references are removed first; then your profile holds exactly what was read from the resume. Your applications and their documents stay as they are."
+              description="Your basics, skills, languages, roles, projects, education, publications and references are removed first; then your profile holds exactly what was read from the resume. Your applications and their documents stay as they are."
               confirmLabel="Replace my profile"
               onConfirm={() => void apply("replace")}
             />
@@ -285,6 +287,28 @@ function Preview({ profile }: { profile: ImportedProfile }) {
         </Section>
       )}
 
+      {profile.projects.length > 0 && (
+        <Section title="Projects">
+          {profile.projects.map((entry, index) => (
+            <Entry
+              key={index}
+              title={entry.name}
+              meta={[entry.link, formatDateRange(entry)].filter(Boolean).join(" · ")}
+              unverified={entry.unverified}
+            >
+              {entry.bullets && (
+                <ul className="list-disc pl-5">
+                  {entry.bullets.split("\n").map((line, lineIndex) => (
+                    <li key={lineIndex}>{line}</li>
+                  ))}
+                </ul>
+              )}
+              {entry.skills.length > 0 && <p className="text-muted">Skills: {entry.skills.join(" · ")}</p>}
+            </Entry>
+          ))}
+        </Section>
+      )}
+
       {profile.education.length > 0 && (
         <Section title="Education">
           {profile.education.map((entry, index) => (
@@ -296,6 +320,14 @@ function Preview({ profile }: { profile: ImportedProfile }) {
             >
               {entry.notes && <p>{entry.notes}</p>}
             </Entry>
+          ))}
+        </Section>
+      )}
+
+      {profile.publications.length > 0 && (
+        <Section title="Publications">
+          {profile.publications.map((entry, index) => (
+            <Entry key={index} title={citationText(entry.citation)} meta={entry.link} unverified={entry.unverified} />
           ))}
         </Section>
       )}

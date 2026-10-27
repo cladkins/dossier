@@ -7,14 +7,25 @@ import {
   addLanguage,
   applyProfileImport,
   addSkill,
+  attachNewProjectSkill,
   attachNewSkill,
   createEducation,
   createExperience,
+  createProject,
+  createPublication,
   createReference,
   discardProfileImport,
   removeEducation,
   removeExperience,
+  removeProject,
+  removePublication,
+  reorderPublications,
+  restorePublication,
+  savePublication,
   restoreExperience,
+  restoreProject,
+  saveProject,
+  setProjectSkill,
   saveExperience,
   saveReference,
   removeLanguage,
@@ -23,8 +34,11 @@ import {
   restoreReference,
   saveEducation,
   removeSkill,
+  removePhoto,
   reorderEntries,
   saveBasics,
+  savePhoto,
+  setPhotoOnResumes,
   setExperienceSkill,
   setLanguageLevel,
   sortEntriesByDate,
@@ -157,6 +171,39 @@ describe("profile actions", () => {
     expect(await prisma().experienceSkill.count()).toBe(1);
   });
 
+  it("creates, saves, removes and restores a project with its skill links (PRO-13)", async () => {
+    const python = await prisma().skill.create({ data: { name: "Python" } });
+    const pandas = await prisma().skill.create({ data: { name: "pandas" } });
+    const created = await createProject({});
+    if (!created.ok) throw new Error(created.error);
+    expect(created.data).toMatchObject({ name: "", link: "", bullets: "", current: false, skillIds: [] });
+
+    const entry = { ...created.data, name: "Churn predictor", link: "github.com/jane/churn", bullets: "Trained a model\nShipped a dashboard", startYear: 2025, startMonth: 2, current: true };
+    expect(await saveProject(entry)).toEqual({ ok: true, data: null });
+    await setProjectSkill({ projectId: entry.id, skillId: python.id, attached: true });
+    await setProjectSkill({ projectId: entry.id, skillId: python.id, attached: true }); // twice is fine
+    const added = await attachNewProjectSkill({ projectId: entry.id, name: "PANDAS" });
+    expect(added).toMatchObject({ ok: true, data: { added: false, skill: { id: pandas.id } } });
+    expect(await prisma().projectSkill.count()).toBe(2);
+    expect((await loadProfile()).projects).toEqual([{ ...entry, skillIds: expect.arrayContaining([python.id, pandas.id]) }]);
+    await setProjectSkill({ projectId: entry.id, skillId: pandas.id, attached: false });
+    expect(await prisma().projectSkill.count()).toBe(1);
+
+    await removeProject({ id: entry.id });
+    expect(await prisma().project.count()).toBe(0);
+    // A save that arrives after the removal does nothing.
+    await expect(saveProject(entry)).resolves.toEqual({ ok: true, data: null });
+    expect(await prisma().project.count()).toBe(0);
+
+    // Undo: the project comes back with links to the skills that still exist.
+    await prisma().skill.delete({ where: { id: pandas.id } });
+    const restored = await restoreProject({ ...entry, skillIds: [python.id, pandas.id] });
+    expect(restored).toMatchObject({ ok: true, data: { id: entry.id, name: "Churn predictor", skillIds: [python.id] } });
+    // Removing a skill detaches it from projects too.
+    await removeSkill({ id: python.id });
+    expect(await prisma().projectSkill.count()).toBe(0);
+  });
+
   it("creates, saves, removes and restores education and references", async () => {
     const school = await createEducation({});
     const person = await createReference({});
@@ -175,6 +222,69 @@ describe("profile actions", () => {
     await expect(restoreEducation(degree)).resolves.toMatchObject({ ok: true, data: { degree: "MSc" } });
     await expect(restoreReference(reference)).resolves.toMatchObject({ ok: true, data: { name: "Jane Doe" } });
     expect(await prisma().reference.findUniqueOrThrow({ where: { id: reference.id } })).toMatchObject({ email: "jane.doe@example.com" });
+  });
+});
+
+describe("publications (#218)", () => {
+  it("creates new ones at the top, saves, removes and restores them", async () => {
+    const older = await createPublication({});
+    const newer = await createPublication({});
+    if (!older.ok || !newer.ok) throw new Error("create failed");
+    expect(newer.data).toEqual({ id: newer.data.id, citation: "", link: "", onResumes: true });
+    expect((await loadProfile()).publications.map((entry) => entry.id)).toEqual([newer.data.id, older.data.id]);
+
+    const entry = { ...newer.data, citation: "**Doe, J.** (2024). *Calm payouts.*", link: "https://doi.org/10.5555/1", onResumes: false };
+    await savePublication(entry);
+    expect((await loadProfile()).publications[0]).toEqual(entry);
+
+    await removePublication({ id: entry.id });
+    expect(await prisma().publication.count()).toBe(1);
+    await expect(restorePublication(entry)).resolves.toEqual({ ok: true, data: entry });
+  });
+
+  it("saves an order set by hand, and refuses a list that changed meanwhile", async () => {
+    const ids = [];
+    for (let index = 0; index < 3; index++) {
+      const created = await createPublication({});
+      if (!created.ok) throw new Error("create failed");
+      ids.push(created.data.id);
+    }
+    expect(await reorderPublications({ ids: [ids[2], ids[0], ids[1]] })).toEqual({ ok: true, data: null });
+    expect((await loadProfile()).publications.map((entry) => entry.id)).toEqual([ids[2], ids[0], ids[1]]);
+    expect(await reorderPublications({ ids: [ids[0], ids[1]] })).toMatchObject({ ok: false, error: expect.stringMatching(/^The list changed/) });
+  });
+});
+
+describe("the photo (#224)", () => {
+  const png = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
+
+  it("saves it, keeps it off resumes and on again, removes it and puts it back", async () => {
+    expect(await savePhoto({ src: png, onResumes: true })).toEqual({ ok: true, data: null });
+    expect((await loadProfile()).photo).toEqual({ src: png, onResumes: true });
+
+    await setPhotoOnResumes({ onResumes: false });
+    expect((await loadProfile()).photo).toEqual({ src: png, onResumes: false });
+    await setPhotoOnResumes({ onResumes: true });
+    expect(await prisma().profileField.findMany({ select: { key: true } })).toEqual([{ key: "photo" }]);
+
+    await removePhoto({});
+    expect((await loadProfile()).photo).toBeNull();
+    await savePhoto({ src: png, onResumes: false });
+    expect((await loadProfile()).photo).toEqual({ src: png, onResumes: false });
+  });
+
+  it("refuses anything but a JPEG, PNG or WebP image", async () => {
+    const svg = `data:image/svg+xml;base64,${btoa("<svg xmlns='http://www.w3.org/2000/svg'/>")}`;
+    expect(await savePhoto({ src: svg, onResumes: true })).toMatchObject({ ok: false });
+    expect(await savePhoto({ src: "https://example.com/me.jpg", onResumes: true })).toMatchObject({ ok: false });
+    expect(await prisma().profileField.count()).toBe(0);
+  });
+
+  it("stays when the basics are saved", async () => {
+    await savePhoto({ src: png, onResumes: true });
+    const basics = (await loadProfile()).basics;
+    await saveBasics({ ...basics, name: "Jane Doe" });
+    expect((await loadProfile()).photo).toEqual({ src: png, onResumes: true });
   });
 });
 
@@ -221,6 +331,20 @@ describe("ordering experience and education (E4-9)", () => {
     expect(await roles()).toEqual(["Newer", "Older"]);
   });
 
+  it("orders projects the same way, with their own setting (PRO-13)", async () => {
+    const a = await createProject({});
+    const b = await createProject({});
+    if (!a.ok || !b.ok) throw new Error("not created");
+    await saveProject({ ...a.data, name: "Older", startYear: 2019 });
+    await saveProject({ ...b.data, name: "Newer", startYear: 2024 });
+    expect((await loadProfile()).projects.map((entry) => entry.name)).toEqual(["Newer", "Older"]);
+    await reorderEntries({ section: "project", ids: [a.data.id, b.data.id] });
+    expect((await loadProfile()).projects.map((entry) => entry.name)).toEqual(["Older", "Newer"]);
+    expect((await prisma().setting.findUnique({ where: { key: "projectOrder" } }))?.value).toBe("manual");
+    expect(await prisma().setting.findUnique({ where: { key: "experienceOrder" } })).toBeNull();
+    expect(await sortEntriesByDate({ section: "project" })).toEqual({ ok: true, data: [b.data.id, a.data.id] });
+  });
+
   it("orders education the same way", async () => {
     const a = await createEducation({});
     const b = await createEducation({});
@@ -257,7 +381,7 @@ describe("applying a profile read from a resume (E4-10)", () => {
     expect(await applyProfileImport({ jobId: job.id, mode: "merge" })).toEqual({
       ok: true,
       data: null,
-      toast: "Added to your profile: 0 roles, 0 degrees, 1 skill, 0 languages, 0 references.",
+      toast: "Added to your profile: 0 roles, 0 projects, 0 degrees, 1 skill, 0 languages, 0 references.",
     });
     expect((await loadProfile()).basics.name).toBe("John Doe");
     // The reading goes once it's used, with the resume's text.

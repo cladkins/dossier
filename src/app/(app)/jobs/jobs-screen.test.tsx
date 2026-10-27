@@ -4,9 +4,10 @@ import type { ComponentProps } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { toast } from "@/components/toast";
-import { EMPTY_QUERY, type ShownPosting, type StoredSearch } from "@/lib/job-search/search";
+import { EMPTY_QUERY, type PostingState, type ShownPosting, type StoredSearch } from "@/lib/job-search/search";
 
 import {
+  acceptArbeitsagenturNote,
   dismissFoundPosting,
   loadFullText,
   removeJobSearch,
@@ -24,6 +25,7 @@ vi.mock("next/navigation", () => ({ useRouter: () => router, usePathname: () => 
 vi.mock("next/link", () => ({ default: ({ href, ...props }: ComponentProps<"a">) => <a href={href} {...props} /> }));
 vi.mock("@/components/toast", () => ({ toast: vi.fn(), toastResult: (result: unknown) => result }));
 vi.mock("./actions", () => ({
+  acceptArbeitsagenturNote: vi.fn(),
   startApplicationFrom: vi.fn(),
   runJobSearch: vi.fn(),
   removeJobSearch: vi.fn(),
@@ -40,7 +42,7 @@ const countries = [
   { code: "fr", name: "France" },
 ];
 const query = { ...EMPTY_QUERY, keywords: "product designer", place: "Hamburg", country: "de" };
-const state = { postingId: null, saved: false, dismissed: false, applicationId: null };
+const state: PostingState = { postingId: null, saved: false, dismissed: false, applicationId: null, score: null };
 
 const posting = (id: string, extra: Partial<ShownPosting> = {}): ShownPosting => ({
   source: "JSEARCH",
@@ -174,7 +176,7 @@ describe("the results", () => {
     renderScreen({ search: stored([posting("a", { salary: "EUR 70,000 a year", remote: true }), posting("b")], "cursor:2") });
     expect(screen.getByText("2 postings from JSearch, more to come · searched today at 14:32")).toBeInTheDocument();
     const list = screen.getByRole("list", { name: "Postings" });
-    const items = within(list).getAllByRole("button");
+    const items = within(list).getAllByRole("button", { name: /^Designer/ });
     expect(items.map((item) => item.getAttribute("aria-pressed"))).toEqual(["true", "false"]);
     expect(items[0]).toHaveTextContent("Company a · Hamburg · Remote");
     expect(items[0]).toHaveTextContent("3 days ago · via LinkedIn · EUR 70,000 a year");
@@ -186,10 +188,10 @@ describe("the results", () => {
 
   it("shows another posting when it's picked, and moves with the arrow keys", async () => {
     renderScreen({ search: stored([posting("a"), posting("b"), posting("c")]) });
-    await userEvent.click(screen.getByRole("button", { name: /Designer b/ }));
+    await userEvent.click(screen.getByRole("button", { name: /^Designer b/ }));
     expect(screen.getByRole("heading", { level: 2, name: "Designer b" })).toBeInTheDocument();
     await userEvent.keyboard("{ArrowDown}");
-    expect(screen.getByRole("button", { name: /Designer c/ })).toHaveFocus();
+    expect(screen.getByRole("button", { name: /^Designer c/ })).toHaveFocus();
     expect(screen.getByRole("heading", { level: 2, name: "Designer c" })).toBeInTheDocument();
     await userEvent.keyboard("{ArrowDown}{ArrowUp}{ArrowUp}");
     expect(screen.getByRole("heading", { level: 2, name: "Designer a" })).toBeInTheDocument();
@@ -213,12 +215,12 @@ describe("the results", () => {
     vi.mocked(dismissFoundPosting).mockResolvedValue({ ok: true, data: { wasSaved: true } });
     renderScreen({ search: stored([posting("a", { state: { ...state, saved: true } }), posting("b")]) });
     await userEvent.click(screen.getByRole("button", { name: "Dismiss" }));
-    expect(screen.queryByRole("button", { name: /Designer a/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Designer a/ })).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { level: 2, name: "Designer b" })).toBeInTheDocument();
     expect(toast).toHaveBeenCalledWith("Dismissed. It won't show in your searches.", { action: { label: "Undo", onClick: expect.any(Function) } });
 
     await userEvent.click(screen.getByRole("button", { name: "1 dismissed posting hidden · Show" }));
-    expect(screen.getByRole("button", { name: /Designer a/ })).toHaveTextContent("Dismissed");
+    expect(screen.getByRole("button", { name: /^Designer a/ })).toHaveTextContent("Dismissed");
 
     vi.mocked(toast).mock.calls[0][1]!.action!.onClick();
     await waitFor(() => expect(restorePosting).toHaveBeenCalledWith({ source: "JSEARCH", externalId: "a", saved: true }));
@@ -238,7 +240,7 @@ describe("the results", () => {
     renderScreen({ search: stored([posting("a")]) });
     await userEvent.click(screen.getByRole("button", { name: "Dismiss" }));
     expect(toast).toHaveBeenCalledWith("Something went wrong on the server. Please try again.");
-    expect(screen.getByRole("button", { name: /Designer a/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Designer a/ })).toBeInTheDocument();
   });
 
   it("loads the next page into the kept search, once each", async () => {
@@ -246,7 +248,7 @@ describe("the results", () => {
     renderScreen({ search: stored([posting("a"), posting("b")], "cursor:2") });
     await userEvent.click(screen.getByRole("button", { name: "Show more" }));
     expect(showMorePostings).toHaveBeenCalledWith({ searchId: "run-1" });
-    expect(within(screen.getByRole("list", { name: "Postings" })).getAllByRole("button")).toHaveLength(3);
+    expect(within(screen.getByRole("list", { name: "Postings" })).getAllByRole("listitem")).toHaveLength(3);
     expect(screen.queryByRole("button", { name: "Show more" })).not.toBeInTheDocument();
   });
 
@@ -281,7 +283,7 @@ describe("the results", () => {
   it("starts an application from the selected posting (E14-8)", async () => {
     vi.mocked(startApplicationFrom).mockResolvedValue({ ok: true, data: { postingId: "p 1" } });
     renderScreen({ search: stored([posting("a"), posting("b")]) });
-    await userEvent.click(screen.getByRole("button", { name: /Designer b/ }));
+    await userEvent.click(screen.getByRole("button", { name: /^Designer b/ }));
     await userEvent.click(screen.getByRole("button", { name: "Start application →" }));
     const { state: _ignored, ...sent } = posting("b");
     void _ignored;
@@ -309,9 +311,22 @@ describe("the results", () => {
     expect(screen.getByText("No postings for “product designer” within 25 km of Hamburg. Try a bigger radius or fewer words.")).toBeInTheDocument();
   });
 
-  it("names the source's attribution when it asks for one", () => {
-    renderScreen({ source: "ADZUNA", search: stored([posting("a", { source: "ADZUNA" })]) });
-    expect(screen.getByText("Jobs by Adzuna")).toBeInTheDocument();
+  it("labels each of Adzuna's postings with a link to its site for the posting's country, as its terms ask", () => {
+    const url = "https://www.adzuna.de/land/ad/4721394012?se=abc&utm_medium=api&utm_source=dossier&v=1";
+    renderScreen({ source: "ADZUNA", search: stored([posting("a", { source: "ADZUNA", url }), posting("b", { source: "ADZUNA", url })]) });
+    const labels = screen.getAllByRole("link", { name: "Jobs by Adzuna (opens in a new tab)" });
+    // One on each card and one on the posting shown.
+    expect(labels).toHaveLength(3);
+    for (const label of labels) {
+      expect(label).toHaveAttribute("href", "https://www.adzuna.de");
+      expect(label).toHaveAttribute("target", "_blank");
+    }
+  });
+
+  it("names the Bundesagentur für Arbeit in plain text, on the posting only", () => {
+    renderScreen({ source: "ARBEITSAGENTUR", search: stored([posting("a", { source: "ARBEITSAGENTUR" })]) });
+    expect(screen.getAllByText("Source: Bundesagentur für Arbeit")).toHaveLength(1);
+    expect(screen.queryByRole("link", { name: /Source: Bundesagentur/ })).not.toBeInTheDocument();
   });
 });
 
@@ -334,6 +349,35 @@ describe("problems", () => {
     expect(alert).toHaveTextContent("No searches left.");
     expect(within(alert).queryByRole("link")).not.toBeInTheDocument();
     expect(within(alert).queryByRole("button")).not.toBeInTheDocument();
+  });
+});
+
+describe("the Bundesagentur für Arbeit (#223)", () => {
+  it("shows its note above the search until it's ticked", async () => {
+    vi.mocked(acceptArbeitsagenturNote).mockResolvedValue({ ok: true, data: null });
+    renderScreen({ source: "ARBEITSAGENTUR", arbeitsagenturNote: true });
+    expect(screen.getByRole("note")).toHaveTextContent(/has no official API.*on your own responsibility/);
+    await userEvent.click(screen.getByRole("checkbox", { name: "I understand, and choose this source myself" }));
+    expect(acceptArbeitsagenturNote).toHaveBeenCalledWith({});
+    expect(router.refresh).toHaveBeenCalled();
+  });
+
+  it("leaves the note out once it's accepted, and for other sources", () => {
+    renderScreen({ source: "ARBEITSAGENTUR" });
+    expect(screen.queryByRole("checkbox", { name: /I understand/ })).not.toBeInTheDocument();
+  });
+
+  it("links each posting to its ad on arbeitsagentur.de, next to the employer's own link", () => {
+    const ba = posting("10000-1234-S", { source: "ARBEITSAGENTUR", url: "https://careers.example/1" });
+    renderScreen({ source: "ARBEITSAGENTUR", search: stored([ba]) });
+    expect(screen.getByRole("link", { name: /Open posting/ })).toHaveAttribute("href", "https://careers.example/1");
+    expect(screen.getByRole("link", { name: /On arbeitsagentur\.de/ })).toHaveAttribute("href", "https://www.arbeitsagentur.de/jobsuche/jobdetail/10000-1234-S");
+  });
+
+  it("has one link when the posting's own link is its ad", () => {
+    const ba = posting("10000-1234-S", { source: "ARBEITSAGENTUR", url: "https://www.arbeitsagentur.de/jobsuche/jobdetail/10000-1234-S" });
+    renderScreen({ source: "ARBEITSAGENTUR", search: stored([ba]) });
+    expect(screen.queryByRole("link", { name: /On arbeitsagentur\.de/ })).not.toBeInTheDocument();
   });
 });
 
@@ -407,12 +451,12 @@ describe("the Saved and Dismissed views (E14-7)", () => {
     renderScreen({ view: "saved", kept: [posting("a", { state: { ...state, saved: true } }), posting("b", { state: { ...state, saved: true } })] });
     await userEvent.click(screen.getByRole("button", { name: "Saved" }));
     expect(unsavePosting).toHaveBeenCalledWith({ source: "JSEARCH", externalId: "a" });
-    expect(screen.queryByRole("button", { name: /Designer a/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Designer a/ })).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { level: 2, name: "Designer b" })).toBeInTheDocument();
     expect(toast).toHaveBeenCalledWith("Removed from Saved.", { action: { label: "Undo", onClick: expect.any(Function) } });
 
     vi.mocked(toast).mock.calls[0][1]!.action!.onClick();
-    expect(await screen.findByRole("button", { name: /Designer a/ })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /^Designer a/ })).toBeInTheDocument();
     expect(savePostingForLater).toHaveBeenCalled();
   });
 
@@ -431,6 +475,6 @@ describe("the Saved and Dismissed views (E14-7)", () => {
     await userEvent.click(screen.getByRole("button", { name: "Bring back" }));
     expect(restorePosting).toHaveBeenCalledWith({ source: "JSEARCH", externalId: "a", saved: false });
     expect(toast).toHaveBeenCalledWith("Brought back. It'll show in your searches again.");
-    expect(screen.queryByRole("button", { name: /Designer a/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Designer a/ })).not.toBeInTheDocument();
   });
 });

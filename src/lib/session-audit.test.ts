@@ -6,18 +6,22 @@ import { describe, expect, it } from "vitest";
 // matcher mistake can't expose data. Server Actions go through action(),
 // route handlers through route(); these are the only exceptions.
 const SIGNED_OUT_ACTIONS = new Map([
-  ["src/app/login/actions.ts", "signIn"], // publicAction: signing in
-  ["src/lib/auth/actions.ts", "signOut"], // only clears the cookie
+  // publicAction: signing in, and the same through the form's own submit (#187)
+  ["src/app/login/actions.ts", ["signIn", "signInWithForm"]],
+  ["src/lib/auth/actions.ts", ["signOut"]], // only clears the cookie
 ]);
 const OPEN_ROUTES = new Set([
   "src/app/api/health/route.ts", // for health checks; says nothing private
   // Google's redirect comes from Google's site, so route()'s same-origin check
   // would refuse it; it checks the session and its signed state itself (E15-1).
   "src/app/api/google/callback/route.ts",
-  // Signing in with OIDC (Authentik): nobody has a session yet. The callback
-  // comes from the provider's site and checks its own signed state.
-  "src/app/api/auth/login/route.ts",
-  "src/app/api/auth/callback/route.ts",
+  // The Claude connector (#221) is called by Claude, not the browser: it
+  // checks its OAuth token instead, and answers 404 while it's off.
+  "src/app/api/mcp/route.ts",
+  "src/app/api/oauth/metadata/route.ts",
+  "src/app/api/oauth/protected-resource/route.ts",
+  "src/app/api/oauth/register/route.ts",
+  "src/app/api/oauth/token/route.ts",
 ]);
 
 const sources = globSync("src/**/*.{ts,tsx}").filter((file) => !/\.test\.tsx?$/.test(file) && !file.startsWith("src/generated/"));
@@ -36,7 +40,7 @@ describe("session checks (E11-5)", () => {
   it("defines every Server Action with action()", () => {
     const unchecked = actionFiles.flatMap((file) =>
       exportsOf(read(file))
-        .filter(([, name, wrapper]) => wrapper !== "action" && SIGNED_OUT_ACTIONS.get(file) !== name)
+        .filter(([, name, wrapper]) => wrapper !== "action" && !SIGNED_OUT_ACTIONS.get(file)?.includes(name))
         .map(([line]) => `${file}: ${line}`),
     );
     expect(unchecked).toEqual([]);
@@ -66,6 +70,20 @@ describe("session checks (E11-5)", () => {
     const source = read("src/app/api/google/callback/route.ts");
     expect(source).toContain("await getSession()");
     expect(source).toContain("await verifyState(");
+  });
+
+  it("checks the token and the switch in the Claude connector itself (#221), as the person the token names", () => {
+    const mcp = read("src/app/api/mcp/route.ts");
+    expect(mcp).toContain("await verifyAccessToken(");
+    // The endpoints a token reaches run as its person, and check that person's switch.
+    for (const file of ["src/app/api/mcp/route.ts", "src/app/api/oauth/token/route.ts"]) {
+      expect(read(file), file).toContain("return runWithTenant(tenant, ");
+      expect(read(file), file).toContain("if (!(await connectorSince())) return new Response(null, { status: 404 });");
+    }
+    // The rest come before a token, so they ask whether anyone has it on.
+    for (const file of [...OPEN_ROUTES].filter((entry) => /\/api\/oauth\/(metadata|protected-resource|register)\//.test(entry))) {
+      expect(read(file), file).toContain("if (!(await connectorOnForAnyone())) return new Response(null, { status: 404 });");
+    }
   });
 
   it("defines every route handler with route()", () => {

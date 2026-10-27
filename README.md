@@ -19,7 +19,9 @@
 
 Dossier keeps your career history in one profile and turns it into a clean resume. For every job you apply to, it reads the posting, shows how you match, and drafts a tailored resume and cover letter that only use facts from your profile. You refine them in a chat, download them as PDFs and track each application from draft to offer.
 
-It's for you and your family on a small server: each person signs in through Authentik and gets a profile of their own, all in your own PostgreSQL database, and an AI model of your choice. That can be a local model through Ollama, so your profile and documents never leave your server, or a hosted one (any OpenAI-compatible API, or Anthropic), which then receives what it writes from. [Privacy](#privacy) says what goes where.
+It's for you and your family on a small server: each person signs in through Authentik and gets a profile of their own, all in your own PostgreSQL database, and an AI model of your choice. That can be a local model through Ollama or LM Studio, so your profile and documents stay on your own hardware, or a hosted one (any OpenAI-compatible API, Anthropic or Mistral), which then receives what it writes from. [Privacy](https://github.com/AienTech/dossier/wiki/Privacy) says what goes where.
+
+**This fork** (`cladkins/dossier`) adds sign-in through Authentik with a profile per person, and runs its own image, `ghcr.io/cladkins/dossier`. Set it up with [Self-hosting](#self-hosting) below. Upstream's [wiki](https://github.com/AienTech/dossier/wiki) still applies to everything after sign-in (AI providers, job sources, Gmail, backups); its installation pages, password and `hash-password` don't apply here.
 
 ## Demo
 
@@ -29,15 +31,18 @@ It's for you and your family on a small server: each person signs in through Aut
 
 ## Features
 
-- **Profile:** basics, skills and languages, experience, education and references, in the order you choose, with a strength meter. Start it from an existing resume (PDF, Word or Markdown) if you like.
+- **Profile:** basics, skills and languages, experience, projects, education, publications and references, in the order you choose, with a strength meter that counts only what a profile needs. Projects (side, open-source, course or thesis work) show what you can do where your job titles don't yet. Publications are cited in your own style, with bold and italics, and go on resumes word for word. Start it from an existing resume (PDF, Word or Markdown) if you like.
 - **Base resume:** twelve themes and a theme builder, previewed live and printed to PDF on the server. Duplicate themes, or share them as files.
-- **Find jobs:** search postings near your city, or anywhere you choose, through JSearch (LinkedIn, Indeed and more), Adzuna or Germany's Bundesagentur für Arbeit. Save the good ones, dismiss the rest, and start an application from a posting with one click.
+- **Find jobs:** search postings near your city, or anywhere you choose, through JSearch (LinkedIn, Indeed and more) or Adzuna. Save the good ones, dismiss the rest, score any of them against your profile, and start an application from a posting with one click.
+- **Startups:** startups that are hiring, from YC startups' job posts and Hacker News' monthly “Who is hiring?” thread, kept to the ones that hire where you live or remotely from your country and ranked against your profile, with the address each one publishes for applications. Dossier reads their sites politely and follows their robots.txt. Start an application to one with a click; you decide whom to write to.
+- **Job agent (optional):** once a day it runs one search for you, skips what you've seen, scores the new postings against your profile and keeps the best on the Agent screen, with its reasons. It can prepare tailored drafts too, which wait for your review. It never sends or applies.
 - **New application:** paste a posting; Dossier pulls out the details and requirements, matches them against your profile, and writes a tailored resume and cover letter in the tone you pick.
 - **Never invents experience:** drafts only use facts from your profile. What the posting asks for and your profile doesn't have is shown as a gap, not made up.
 - **Refine:** ask for changes in a chat, edit or regenerate any part (every part of the cover letter too: sender, date, recipient, greeting and sign-off, written in the letter's language), undo AI changes or go back to any earlier version, keep private notes.
 - **Send:** an email to go with each application, to whoever the posting says to send it to, ready to copy or open in your mail app, with the resume and cover letter PDFs to attach. Edit, rewrite or refine it like the documents.
-- **Gmail and Calendar (optional):** connect your Google account to send an application from your own address with its PDFs attached, see employers' replies next to each application, have the AI read what they ask and draft your answer from your profile, offer interview times you're free, and see your week or month on a Calendar screen, with interviews kept in step with Google Calendar both ways. Nothing is sent without your confirmation. Set it up by entering your Google OAuth client in Settings → Google, or with `DOSSIER_GOOGLE_CLIENT_ID` and `DOSSIER_GOOGLE_CLIENT_SECRET` (see `.env.example`).
-- **Track:** a board and a table of every application, and a dashboard with your funnel (last 30 days, 90 days or all time), a week-by-week chart and what's worth a look next, upcoming interviews included.
+- **Claude connector (optional):** use Dossier from Claude, on claude.ai, in the Desktop and mobile apps or in Claude's command-line app, on your own Claude plan. Claude can search for jobs, score them against your profile, read your profile and applications, and save the resume and cover letter it writes as a Draft, checked like Dossier's own. It never sends or deletes anything. Without an AI model of Dossier's own, **Write it with Claude** hands a posting to a new Claude chat. Turn it on in Settings → Claude connector (see [Connecting Claude](https://github.com/AienTech/dossier/wiki/Connecting-Claude)).
+- **Gmail and Calendar (optional):** connect your Google account to send an application from your own address with its PDFs attached, see employers' replies next to each application, have the AI read what they ask and draft your answer from your profile, offer interview times you're free, and see your month and the week ahead on the dashboard, with interviews kept in step with Google Calendar both ways. Nothing is sent without your confirmation. Set it up by entering your Google OAuth client in Settings → Google, or with `DOSSIER_GOOGLE_CLIENT_ID` and `DOSSIER_GOOGLE_CLIENT_SECRET` (see [Connecting Gmail and Calendar](https://github.com/AienTech/dossier/wiki/Connecting-Gmail-and-Calendar)).
+- **Track:** a board and a table of every application, and a dashboard with your funnel (last 30 days, 90 days or all time), a week-by-week chart, what's worth a look next, upcoming interviews included, and a calendar.
 - **Your data:** export and import everything as one file, nightly backups, and Delete everything.
 
 ## Screenshots
@@ -59,7 +64,7 @@ It's for you and your family on a small server: each person signs in through Aut
   </tr>
   <tr>
     <td><img src=".github/images/inbox.png" alt="The inbox: employers' replies from Gmail, what each one asks, and mail to link to an application"><br>Replies from Gmail, read by the AI, with answers it drafts</td>
-    <td><img src=".github/images/calendar.png" alt="The calendar's week: an interview next to the rest of the Google Calendar"><br>Your interviews in your Google Calendar's week, kept in step</td>
+    <td><img src=".github/images/calendar.png" alt="The dashboard on a wide window, with the calendar beside the cards: the month, and the week ahead with an interview among the Google Calendar's events"><br>Your interviews and Google Calendar on the dashboard, kept in step</td>
   </tr>
 </table>
 
@@ -75,7 +80,7 @@ Any Linux server you can reach over SSH works, from any provider. Give it:
 
 - **At least 2 vCPUs and 2 GB of memory.** Dossier uses up to about 1 GB, since it prints PDFs with a built-in Chromium; PostgreSQL and the system need the rest (see [Performance and sizing](#performance-and-sizing)).
 - **A few GB of disk.** The image is about 1.7 GB; your data takes far less.
-- **More for a local model:** about 6 GB of extra memory and 4 or more cores for `qwen2.5:7b` (see [Local model with Ollama](#local-model-with-ollama)). With a hosted AI provider, you don't need any of that.
+- **More for a local model:** about 6 GB of extra memory and 4 or more cores for `qwen2.5:7b` (see [Local model with Ollama](https://github.com/AienTech/dossier/wiki/Choosing-an-AI-provider)). With a hosted AI provider, you don't need any of that.
 - **A domain name** for HTTPS, such as `dossier.example.com`, with a DNS `A` record pointing at the server.
 
 The commands below are for Debian or Ubuntu. Only SSH (port 22) and the web (80 and 443) need to be open to the internet.
@@ -151,7 +156,7 @@ EOF
 sudo systemctl reload caddy
 ```
 
-Replace `auth.example.com` with your Authentik's address. Open `https://dossier.example.com`, sign in with Authentik, then pick an AI model in **Settings → AI provider** (see [Choosing an AI provider](#choosing-an-ai-provider)) and, if you like, a job source in **Settings → Job search**.
+Replace `auth.example.com` with your Authentik's address. Open `https://dossier.example.com`, sign in with Authentik, then pick an AI model in **Settings → AI provider** (see [Choosing an AI provider](https://github.com/AienTech/dossier/wiki/Choosing-an-AI-provider)) and, if you like, a job source in **Settings → Job search**.
 
 <details>
 <summary>Traefik, nginx or Nginx Proxy Manager</summary>
@@ -183,7 +188,7 @@ Dossier is configured with environment variables; everything else is set in the 
 |---|---|---|
 | `TZ` | `UTC` | The server's time zone, e.g. `Europe/Berlin`. Nightly backups run at 03:00 in it, and dates the server writes (a letter's date, "today") follow it. |
 | `DOSSIER_BACKUP_RETENTION_DAYS` | `14` | How many days of nightly backups to keep. |
-| `DOSSIER_TELEMETRY` | `on` | `off` stops the usage ping, which sends a random install ID and the version number once on each day Dossier is used (see [Privacy](#privacy)). |
+| `DOSSIER_TELEMETRY` | ask | `on` or `off` answers the usage ping's question in advance; unset, Dossier asks after sign-in. The ping sends a random install ID and the version number once on each day Dossier is used (see [Privacy](https://github.com/AienTech/dossier/wiki/Privacy)). |
 | `DOSSIER_AI_PROVIDER` | none | `local` (Ollama or llama.cpp), `openai` (any OpenAI-compatible API) or `anthropic`. A default for Settings → AI provider; a choice saved there wins. |
 | `DOSSIER_AI_URL` | per provider | The AI server's address, e.g. `http://ollama:11434`. |
 | `DOSSIER_AI_MODEL` | per provider | The model to use, e.g. `qwen2.5:7b` or `claude-sonnet-5`. |
@@ -193,12 +198,12 @@ Dossier is configured with environment variables; everything else is set in the 
 | `DOSSIER_JSEARCH_KEY` | none | A JSearch key, from OpenWeb Ninja or RapidAPI. |
 | `DOSSIER_JSEARCH_HOST` | `openwebninja` | Where that key is from: `openwebninja` or `rapidapi`. |
 | `DOSSIER_ADZUNA_APP_ID`, `DOSSIER_ADZUNA_KEY` | none | Adzuna's app ID and key. |
-| `DOSSIER_GOOGLE_CLIENT_ID`, `DOSSIER_GOOGLE_CLIENT_SECRET` | none | A Google OAuth client, for Gmail and Calendar (see [Connecting Gmail and Calendar](#connecting-gmail-and-calendar)). A client saved in Settings → Google wins. |
+| `DOSSIER_GOOGLE_CLIENT_ID`, `DOSSIER_GOOGLE_CLIENT_SECRET` | none | A Google OAuth client, for Gmail and Calendar (see [Connecting Gmail and Calendar](https://github.com/AienTech/dossier/wiki/Connecting-Gmail-and-Calendar)). A client saved in Settings → Google wins. |
 | `DOSSIER_PUBLIC_URL` | the address in use | The address Dossier is reached at, e.g. `https://dossier.example.com`, for Google's redirect after you sign in. Only needed when your proxy doesn't pass on the host and protocol. |
 | `<NAME>_FILE` | none | Reads a secret from a file instead, e.g. `DOSSIER_SECRET_FILE=/run/secrets/dossier_secret`. Works for `DATABASE_URL`, `DOSSIER_SECRET`, `DOSSIER_AI_KEY`, `DOSSIER_JSEARCH_KEY`, `DOSSIER_ADZUNA_KEY` and `DOSSIER_GOOGLE_CLIENT_SECRET`. A file keeps the value out of `docker inspect`. |
 | `DOSSIER_IMAGE` | `ghcr.io/cladkins/dossier:main` | The image to run: this repository's CI publishes it on every push to `main`, also tagged with the commit SHA. Set a SHA tag to upgrade only when you choose. |
 | `DOSSIER_PORT` | `38470` | The port on the server (`127.0.0.1`) that Dossier listens on, for the reverse proxy. |
-| `COMPOSE_PROFILES` | none | `ai` runs Ollama as well (see [Local model with Ollama](#local-model-with-ollama)). |
+| `COMPOSE_PROFILES` | none | `ai` runs Ollama as well (see [Local model with Ollama](https://github.com/AienTech/dossier/wiki/Choosing-an-AI-provider)). |
 
 Running the image without the Compose file? Set `DATABASE_URL` (`postgresql://user:password@host:5432/database`) instead of `POSTGRES_PASSWORD`, and mount a volume at `/data`, where nightly backups and zipped PDFs go.
 
@@ -216,128 +221,35 @@ Each person's data lives in a database of their own on the same Postgres server,
 
 Shared between everyone: the server's environment variables (`DOSSIER_AI_*`, job source keys, the Google OAuth client). Each person can override them in their own Settings. A person's backups and zipped PDFs go to `/data/users/<id>/`; the owner's stay in `/data`.
 
-## Choosing an AI provider
+### The Claude connector behind Authentik
 
-Open **Settings → AI provider**, pick one, and press **Test connection**:
+The Claude connector (**Settings → Claude connector**, see upstream's [Connecting Claude](https://github.com/AienTech/dossier/wiki/Connecting-Claude)) works per person: each person turns it on in their own Settings and connects their own Claude, which only reads their data.
 
-- **Local model:** Ollama or llama.cpp on your own hardware. Private and free, but slower; see [below](#local-model-with-ollama) for setup and model sizes.
-- **OpenAI-compatible:** OpenAI itself or any server that speaks its API (OpenRouter, vLLM, LM Studio and others). Enter its address, your API key and the model.
-- **Anthropic:** Claude models with your own API key.
+Claude's servers call Dossier directly, without signing in to Authentik; they carry Dossier's own tokens instead. So Authentik has to let those addresses through. In Authentik, edit the Dossier **Proxy Provider** → **Advanced protocol settings** → **Unauthenticated Paths**, and add:
 
-API keys are stored encrypted with `DOSSIER_SECRET` and never sent back to the browser. **Never invent experience** (on by default) keeps drafts to facts from your profile and flags anything it can't find there.
-
-### Local model with Ollama
-
-With a local model, your profile, postings and documents never leave your server. The Compose file can run Ollama next to Dossier. Switch it on, start it, and pull a model:
-
-```bash
-echo "COMPOSE_PROFILES=ai" >> .env
-docker compose up -d
-docker compose exec ollama ollama pull qwen2.5:7b
+```
+^/api/mcp
+^/api/oauth/
+^/\.well-known/oauth-
 ```
 
-Then, in **Settings → AI provider → Local model**, set the server address to `http://ollama:11434`, pick the model and press **Test connection**. Or set `DOSSIER_AI_PROVIDER=local`, `DOSSIER_AI_URL=http://ollama:11434` and `DOSSIER_AI_MODEL=qwen2.5:7b` in `.env`.
+Leave `/oauth/authorize` out: that's the page where you allow Claude in, and it has to go through Authentik so Dossier knows whose Claude it is. With Nginx Proxy Manager, keep the `proxy_set_header X-Original-URL $scheme://$http_host$request_uri;` line in the `/outpost.goauthentik.io` block of the forward-auth config: it's how Authentik sees which path is asked for.
 
-**Which model:** `qwen2.5:7b` is a good start: a 4.7 GB download that needs about 6 GB of memory with Dossier's 16k-token context. On a smaller server, `qwen2.5:3b` (2 GB, about 3 GB of memory) works, with plainer writing. These are suggestions, not yet benchmarked. On a CPU, reading a posting takes a minute or two and a whole new application several minutes, so the local timeout is 5 minutes per request (`DOSSIER_AI_TIMEOUT_SECONDS`); 4 or more cores help, a GPU much more.
+## Documentation
 
-**Ollama elsewhere:** on another machine in your network, use `http://<its address>:11434`, and start Ollama there with `OLLAMA_HOST=0.0.0.0` so it listens beyond localhost. For Ollama installed on the same server outside Docker, use `http://host.docker.internal:11434`, which `compose.yml` points at the server; Ollama then has to listen beyond localhost too, so make sure your firewall keeps port 11434 closed to the internet. Inside a container, `localhost` is the container itself, never the server.
+The [wiki](https://github.com/AienTech/dossier/wiki) has what comes after installing:
 
-## Choosing a job source
-
-Find jobs is off until you pick a source in **Settings → Job search**. LinkedIn and Indeed don't let other apps read their job listings, so Dossier searches one of these instead:
-
-| Source | What it covers | Key and cost |
-|---|---|---|
-| **JSearch** | Google for Jobs: postings from LinkedIn, Indeed, Glassdoor, Stepstone and company sites, in most countries, with their whole text. | A key from [OpenWeb Ninja](https://www.openwebninja.com/api/jsearch) or [RapidAPI](https://rapidapi.com/letscrape-6bRBa3QguO5/api/jsearch). The free plan has 200 searches a month; each page of results is one. |
-| **Adzuna** | Adzuna's own index in 19 countries. It only shares the start of each posting; Dossier fetches the rest from the posting's page. | A free app ID and key from [Adzuna's developer site](https://developer.adzuna.com/signup), about 250 searches a day. |
-| **Bundesagentur für Arbeit** | Germany's federal job board, with whole postings. Germany only. | No key, free. It isn't an official API (it's the access the agency's own site uses), so it can change without notice. |
-
-The search starts from your profile's city, country and current role; change the place, radius (10 to 200 km), how recent and Remote only as you like. Every search is kept with what it found until you remove it, under **Past searches**, so going back to one, or reloading, doesn't spend another search.
-
-## Connecting Gmail and Calendar
-
-This is optional. With a Google account connected, Dossier sends an application from your own Gmail address with its PDFs attached, checks Gmail every few minutes for employers' replies and links them to their applications, has the AI read each reply and draft your answer, offers times you're free in Google Calendar, and adds agreed interviews to it. Nothing is sent, and no status changes, until you confirm it.
-
-The **Calendar** screen shows your week or month: the events in your Google Calendar, with your interviews linked to their applications. Interviews stay in step both ways: change or remove an interview's date in Dossier and its event moves or goes; move or delete the event in Google Calendar and Dossier follows.
-
-Google doesn't let one sign-in serve every server, so each install brings its own OAuth client:
-
-1. In [Google Cloud Console](https://console.cloud.google.com/), create a project and enable the **Gmail API** and the **Google Calendar API**.
-2. Set up the **OAuth consent screen** as External, add yourself as a test user, then publish it (**In production**). While it's in Testing, Google stops the access after 7 days.
-3. Create an **OAuth client ID** of type Web application, with `https://<your Dossier address>/api/google/callback` as an authorised redirect URI. Settings → Google shows the exact address to copy.
-4. Enter the client's ID and secret in **Settings → Google**, or set `DOSSIER_GOOGLE_CLIENT_ID` and `DOSSIER_GOOGLE_CLIENT_SECRET`. Then press **Connect Google account** and choose what Dossier may do: send, read, and use your calendar.
-
-Google only verifies apps that read mail after a security review, so its sign-in page warns that the app isn't verified. It's your own client: continue under **Advanced**. The refresh token is stored encrypted with `DOSSIER_SECRET`. **Disconnect** revokes Dossier's access at Google.
-
-By default the inbox check only keeps mail in threads Dossier sent and mail from the companies you applied to. **Every new email** in Settings → Google keeps all new mail outside Promotions and Social, and the AI reads that too. [PRIVACY.md](PRIVACY.md#what-dossier-keeps) says what's kept, for how long, and what goes to Google and the AI.
-
-## Backups and restore
-
-Run these from your Dossier folder (`~/dossier`).
-
-- **Export:** **Settings → Your data → Export** downloads everything (profile, themes, settings, applications with their documents, chat, notes and history) as one JSON file. Your API key is left out unless you tick the box.
-- **Import:** importing such a file replaces all data in one step, after saving a backup of what was there to the data directory's `backups` folder.
-- **Nightly backups** (on by default) write the same export to `/data/backups` in the app's volume at 03:00 server time, keeping `DOSSIER_BACKUP_RETENTION_DAYS` days of them. Copy them off the server now and then: `docker compose cp app:/data/backups ./backups`.
-- **Database dumps:** back up PostgreSQL itself too:
-
-  ```bash
-  docker compose exec -T db pg_dump -U dossier -Fc dossier > dossier.dump
-  ```
-
-  To restore a dump, stop Dossier, load the dump, and start Dossier again:
-
-  ```bash
-  docker compose stop app
-  docker compose exec -T db pg_restore --clean --if-exists -U dossier -d dossier < dossier.dump
-  docker compose start app
-  ```
-
-Keep a copy of `.env` with your backups: saved API keys can't be read without its `DOSSIER_SECRET` (an export with the key included carries it in plain text instead).
-
-## Upgrading
-
-When a new version is out, the sidebar says so, with a link to what's new; Settings → About shows it too. Dossier checks GitHub for it once on each day you use it (switch that off in Settings → About).
-
-Take a backup first (an export, or a database dump). Then, in your Dossier folder:
-
-```bash
-docker compose pull
-docker compose up -d
-```
-
-`latest` is always the newest release. If you've pinned a version with `DOSSIER_IMAGE`, change it to the new one first. When a release's notes say `compose.yml` changed, fetch it again with the `curl` line from [step 3](#3-set-up-dossier).
-
-The new version updates the database on start. Going back to an older version after that isn't supported: restore the backup you took instead.
-
-From 1.4, Dossier sends a usage ping (see [Privacy](#privacy)). If you'd rather it didn't, set `DOSSIER_TELEMETRY=off` before you upgrade to 1.4 or later.
-
-**From password sign-in:** Dossier no longer has a password of its own; Authentik signs people in. Remove `DOSSIER_PASSWORD` from `.env`, set `DOSSIER_OWNER` to your Authentik user name so you keep your data, fetch the new `compose.yml`, and set up Authentik as in [step 4](#4-put-authentik-in-front-of-it).
-
-## Troubleshooting
-
-`docker compose logs app` shows the app's log (add `-f` to follow it). After changing `.env`, run `docker compose up -d` again.
-
-- **"Dossier didn't start: applying the database migrations failed."** The error above that line says why. `P1001` means the database isn't reachable: check that the `db` container is running (`docker compose ps`). If a migration failed halfway, the database needs repairing before the next start: restore the dump you took before upgrading, or ask for help with the log.
-- **"… is not set" or "DOSSIER_SECRET is too short":** set the variable the log names in `.env`.
-- **PDFs fail or time out:** Chromium needs memory; give the app at least 768 MB (`compose.yml` gives it 1 GB). Fonts are bundled with Dossier, so documents look the same everywhere; a custom document language in a script Dossier has no font for may show empty boxes.
-- **The AI times out:** local models on a CPU are slow. Try a smaller model, or raise `DOSSIER_AI_TIMEOUT_SECONDS`. **Test connection** in Settings shows whether Dossier reaches the server at all; inside Docker, `localhost` isn't the server.
-- **An import fails with "413" or "Request Entity Too Large":** the reverse proxy's upload limit is below 10 MB. Caddy has none by default; with nginx, set `client_max_body_size 12m;`.
-- **"That file is over 10 MB":** imports are capped at 10 MB, roughly 500 applications. Raising the cap means changing two settings in the code (see [Import size limit](DEVELOPMENT.md#import-size-limit)).
-- **Every page shows "Sign in through Authentik":** requests reach Dossier without Authentik's `X-authentik-*` headers. Check that the proxy sends them on (`copy_headers` with Caddy) and that you open Dossier at the address Authentik serves.
-- **Your data is missing after signing in:** `DOSSIER_OWNER` doesn't match your Authentik user name, so you got a new, empty profile. Fix it and run `docker compose up -d`.
-- **Is it up?** `/api/health` answers `{"status":"ok"}` when the app and its database are fine, and 503 when the database isn't reachable.
-
-## Privacy
-
-Everything you enter is kept in your PostgreSQL database and data directory. [PRIVACY.md](PRIVACY.md) has the details: what's kept and for how long, what deleting removes, everything that leaves your server and who receives it, and a note on the GDPR.
-
-- **AI:** with a local model, your profile, postings and documents never leave your server. A hosted provider receives what each task needs: the posting, your profile without contact details (no email, phone, address, date of birth or links), what you tell it about the application, and, when you refine, the drafts and your chat messages, though never a letter's sender or signature. Importing a resume sends its whole text, contact details included; the import page says so first. The notes you keep on an application are never sent. How long the provider keeps what it receives, and where it processes it, depend on its terms and your account.
-- **Task data:** what an AI task was given and wrote (a posting being read, a resume's text, drafts you didn't turn into an application) is deleted after 24 hours, or as long as Settings → Your data says. Deleting an application deletes its task data at once.
-- **Usage ping:** on each day you use Dossier, your server sends `telemetry.dossier.aien.me` a random install ID and the version number, once, so the project knows how many installs are in use and how often. Nothing else is sent. Set `DOSSIER_TELEMETRY=off` to stop it. [PRIVACY.md](PRIVACY.md#usage-ping) says what the receiver keeps, for how long, and how to have it deleted.
-- **Update check:** once on each day you use Dossier, and when you press **Check for updates**, your server asks GitHub for the latest release, and sends nothing about you or your install. Switch the daily check off in Settings → About.
-- **Gmail and Calendar:** off until you connect a Google account. Dossier then keeps the mail about your applications (only their text, not attachments) and what the AI read in it, and a hosted AI provider receives each reply it reads or answers. Deleting an application deletes its mail; **Disconnect** revokes the access at Google.
-- **When you ask for it:** Find jobs, off until you choose a source, sends the source what you search for and nothing from your profile. **Fetch** asks a job site for a posting's page, from your server.
-- **No other tracking or analytics:** Dossier loads nothing from other sites (its Content-Security-Policy forbids it, and the ping comes from your server, not your browser), and Next.js telemetry is off in the image.
+- [Choosing an AI provider](https://github.com/AienTech/dossier/wiki/Choosing-an-AI-provider): a hosted model, or a local one with Ollama or LM Studio.
+- [Choosing a job source](https://github.com/AienTech/dossier/wiki/Choosing-a-job-source): JSearch or Adzuna (and an unofficial one for Germany), and the job agent.
+- [Connecting Gmail and Calendar](https://github.com/AienTech/dossier/wiki/Connecting-Gmail-and-Calendar): your own Google OAuth client, step by step.
+- [Connecting Claude](https://github.com/AienTech/dossier/wiki/Connecting-Claude): the Claude connector, in Claude's apps and on the command line. Behind Authentik, also see [The Claude connector behind Authentik](#the-claude-connector-behind-authentik).
+- [Backups and restore](https://github.com/AienTech/dossier/wiki/Backups-and-restore): exports, nightly backups and database dumps.
+- <a name="upgrading"></a>Upgrading: this fork takes upstream's releases through its own pull requests; then `docker compose pull` and `docker compose up -d` (or Deploy in Komodo). Back up first.
+- [Troubleshooting](https://github.com/AienTech/dossier/wiki/Troubleshooting): what the common errors mean, and what to do about them. With Authentik:
+  - **Every page shows "Sign in through Authentik":** requests reach Dossier without Authentik's `X-authentik-*` headers. Check that the proxy sends them on (`copy_headers` with Caddy) and that you open Dossier at the address Authentik serves.
+  - **Your data is missing after signing in:** `DOSSIER_OWNER` doesn't match your Authentik user name, so you got a new, empty profile. Fix it and run `docker compose up -d`.
+- [Privacy](https://github.com/AienTech/dossier/wiki/Privacy): what stays on your server and what leaves it. [PRIVACY.md](PRIVACY.md) has the details.
+- [Environment variables](https://github.com/AienTech/dossier/wiki/Environment-variables): every setting the server reads, except that this fork has no `DOSSIER_PASSWORD` and adds the ones in [Environment variables](#environment-variables) above.
 
 ## Known limitations
 

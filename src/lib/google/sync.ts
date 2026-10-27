@@ -37,8 +37,9 @@ const NOISE_LABELS = ["CATEGORY_PROMOTIONS", "CATEGORY_SOCIAL", "CATEGORY_FORUMS
 export const questionsSchema = z.array(z.string());
 
 async function matchables(): Promise<MatchableApplication[]> {
+  // Agent drafts waiting for review were never sent: no reply can be about them (#195).
   const applications = await prisma.application.findMany({
-    where: { archivedAt: null },
+    where: { archivedAt: null, awaitingReview: false },
     select: {
       id: true,
       company: true,
@@ -108,7 +109,10 @@ async function runSync(historyId: string | null, ownAddress: string, scope: "kno
   const kept: string[] = [];
   // Oldest first, so a thread's first mail links it for the ones after.
   const mails: ReadMail[] = [];
-  for (const id of fresh) mails.push(await getMessage(id, signal));
+  for (const id of fresh) {
+    const mail = await getMessage(id, signal);
+    if (mail) mails.push(mail);
+  }
   mails.sort((a, b) => a.date.getTime() - b.date.getTime());
 
   for (const mail of mails) {

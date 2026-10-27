@@ -66,6 +66,17 @@ export function tailoringSummary({
     );
   }
 
+  const projects = profile.projects.filter((entry) => {
+    const tailored = unit(`project:${entry.id}`);
+    return tailored && !same(tailored.text, entry.bullets.split("\n").map((line) => line.trim()).filter(Boolean).join("\n"));
+  });
+  if (projects.length > 0) {
+    list.push(`Reworded your ${listOf(projects.map((entry) => entry.name || "untitled"))} ${projects.length === 1 ? "project" : "projects"} for this job`);
+  }
+
+  const publications = resume.filter((entry) => entry.id.startsWith("publication:")).length;
+  if (publications > 0) list.push(`Kept your ${publications === 1 ? "publication" : `${publications} publications`} word for word`);
+
   const skills = (unit("skills")?.text ?? "").split(" · ").filter(Boolean);
   const profileSkills = profile.skills.map((skill) => skill.name);
   const kept = profileSkills.filter((name) => skills.some((skill) => sameName(skill, name)));

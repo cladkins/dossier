@@ -32,7 +32,16 @@ describe("buildExport (E10-4)", () => {
     expect(file).toMatchObject({ format: "dossier-export", schemaVersion: EXPORT_SCHEMA_VERSION, exportedAt: now });
     expect(file.profile.skills.length).toBe(await prisma().skill.count());
     expect(file.profile.experience.flatMap((entry) => entry.skillIds).length).toBe(await prisma().experienceSkill.count());
+    // Projects with their skills (PRO-13).
+    expect(file.profile.projects.map((entry) => entry.name)).toEqual(["Tidewater design tokens"]);
+    expect(file.profile.projects.flatMap((entry) => entry.skillIds).length).toBe(await prisma().projectSkill.count());
+    // Publications in their order, with their switch (#218).
+    expect(file.profile.publications).toEqual([expect.objectContaining({ citation: expect.stringMatching(/^\*\*Doe, J\.\*\*/), onResumes: true, sort: 0 })]);
     expect(file.profile.references.length).toBe(await prisma().reference.count());
+    // Facts about me, and each application's own (PRO-14, APP-15).
+    expect(file.profile.facts.map((fact) => fact.text)).toEqual((await prisma().fact.findMany({ where: { applicationId: null }, orderBy: { sort: "asc" } })).map((fact) => fact.text));
+    expect(file.profile.facts.length).toBeGreaterThan(0);
+    expect(file.applications.flatMap((application) => application.facts).length).toBe(await prisma().fact.count({ where: { applicationId: { not: null } } }));
     expect(file.applications.length).toBe(await prisma().application.count());
     expect(file.applications.flatMap((application) => application.events).length).toBe(await prisma().statusEvent.count());
     expect(file.applications.flatMap((application) => application.documents).length).toBe(await prisma().document.count());
@@ -54,11 +63,14 @@ describe("buildExport (E10-4)", () => {
     expect(withKey.settings.map((setting) => setting.key)).not.toContain("apiKeyEnc");
   });
 
-  it("leaves out the install's own settings: the usage ping's ID and day", async () => {
+  it("leaves out the install's own settings: the usage ping's ID, day and answer", async () => {
     await prisma().setting.createMany({
       data: [
         { key: "usagePingId", value: "6f1c0e5a-9b1d-4c3e-8f2a-1d2e3f4a5b6c" },
         { key: "usagePingDay", value: "2026-09-28" },
+        { key: "usagePingChoice", value: "on" },
+        { key: "usagePingChoiceAt", value: "2026-10-20T08:00:00.000Z" },
+        { key: "usagePingChoiceText", value: "1" },
       ],
     });
     const data = await buildExport(prisma(), { now, includeApiKey: true });

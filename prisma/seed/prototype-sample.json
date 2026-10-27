@@ -57,6 +57,21 @@
         "bullets": "Delivered web projects for cultural institutions and municipalities"
       }
     ],
+    "projects": [
+      {
+        "id": "p1",
+        "name": "Tidewater design tokens",
+        "link": "github.com/janedoe/tidewater",
+        "start": "Jan 2023",
+        "end": "Present",
+        "skills": [
+          "Design systems",
+          "Figma",
+          "HTML & CSS"
+        ],
+        "bullets": "Built an open-source Figma plugin that turns design tokens into CSS variables\nMaintain it with two contributors; used by design teams at several logistics startups"
+      }
+    ],
     "education": [
       {
         "id": "d1",
@@ -73,6 +88,13 @@
         "start": "2010",
         "end": "2013",
         "notes": ""
+      }
+    ],
+    "publications": [
+      {
+        "id": "u1",
+        "citation": "**Doe, J.**, & Vermeer, K. (2016). Trust in automated scheduling: A field study with dispatch planners. *Proceedings of the Delft Design Conference*, 4, 112–121.",
+        "link": "https://doi.org/10.5555/12345678"
       }
     ],
     "skills": [
@@ -107,6 +129,10 @@
         "email": "john.doe@example.com",
         "phone": ""
       }
+    ],
+    "facts": [
+      "I'd like to stay close to user research: it's the part of design work I enjoy most.",
+      "I can start at short notice, and I'd move anywhere in the Netherlands for the right team."
     ]
   },
   "applications": [
@@ -211,6 +237,7 @@
     }
   ],
   "ledgerly": {
+    "facts": ["I've used Ledgerly for my own freelance invoicing, so I know the product as a customer."],
     "posting": "Ledgerly: Senior Product Designer, Payments\nAmsterdam (hybrid, 3 days in office) · €75,000–€90,000 · Apply by 15 October\n\nLedgerly helps small businesses across Europe get paid on time. Our Payments team builds the flows that move money (invoicing, payouts, reconciliation), and we're looking for a senior designer to make them feel calm and trustworthy.\n\nWhat you'll do\n- Own the design of payment and payout flows end to end\n- Work closely with engineering and compliance on high-stakes interactions\n- Evolve our design system together with the platform team\n- Plan and run research with small-business owners\n\nWhat we're looking for\n- 5+ years of product design, ideally on complex B2B tools\n- You've built or maintained a design system\n- You run user research independently\n- Strong prototyping skills in Figma\n- Accessibility know-how (WCAG 2.2)\n- Experience with payments or fintech\n- Dutch is a plus",
     "extract": {
       "title": "Senior Product Designer · Ledgerly Payments",

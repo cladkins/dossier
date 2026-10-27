@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Switch } from "radix-ui";
 import { useEffect, useId, useOptimistic, useRef, useState, useTransition, type ReactNode } from "react";
@@ -29,19 +30,22 @@ import type { RefineResult } from "@/lib/jobs/refine";
 import type { RegenerateUnitResult } from "@/lib/jobs/regenerate-unit";
 import type { JobView } from "@/lib/jobs/runner";
 import type { WriteEmailResult } from "@/lib/jobs/write-email";
-import type { ProfileData } from "@/lib/profile";
+import type { FactItem, ProfileData } from "@/lib/profile";
 import type { RefineSuggestions } from "@/lib/refine-suggestions";
-import { hasSidebar } from "@/lib/themes";
-import { cleanUnitText, unitName } from "@/lib/unit-text";
+import { hasSidebar, type ThemeData } from "@/lib/themes";
+import { cleanUnitText, isPublicationUnit, unitName } from "@/lib/unit-text";
 
 import {
   addMatchSkill,
+  leaveOutUnit,
   putBackTrimmed,
   restoreUnit,
   restoreVersion,
   saveUnit,
   sendMessage,
+  setApplicationTheme,
   setFollowThemeLayout,
+  setShowPhoto,
   startRegenerating,
   startWritingEmail,
   undoEmailRewrite,
@@ -58,7 +62,8 @@ import { NotesTab } from "./notes-tab";
 import { PostingTab, type PostingData } from "./posting-tab";
 import { RefinePanel, type ChatEntry } from "./refine-panel";
 import { StatusControl } from "./status-control";
-import { TrimmedNotice } from "./trimmed-notice";
+import { ThemeMenu } from "./theme-menu";
+import { byPageLimit, TrimmedNotice } from "./trimmed-notice";
 
 import { aboutWords, type Tab } from "./tabs";
 import { UnitFrame } from "./unit-frame";
@@ -102,7 +107,11 @@ export type ApplicationViewProps = {
     /** The documents' language, e.g. "English". */
     language: string;
     followThemeLayout: boolean;
+    /** The Photo switch (#224); null follows the profile's "Show on resumes". */
+    showPhoto: boolean | null;
     archived: boolean;
+    /** A job agent draft not approved yet (#195): it isn't in Applications. */
+    awaitingReview?: boolean;
     /** The next interview, while in Interview (E9-9). */
     nextInterviewAt: Date | null;
   };
@@ -113,11 +122,16 @@ export type ApplicationViewProps = {
   match: Match | null;
   /** The posting's requirements, in the same order as the match's items. */
   requirements: Requirement[];
+  /** What the user tells the AI for this application (APP-15). */
+  facts: FactItem[];
   /** Notes and status changes, newest first (E8-9). */
   activity: ActivityEntry[];
   meta: string[];
   resume: DocumentData | null;
   letter: DocumentData | null;
+  /** Every theme, for the Theme menu (#226), and which is the base theme. */
+  themes: ThemeData[];
+  baseThemeId: string;
   /** The email to send the application with (Email tab), once it's written. */
   email: Unit[] | null;
   /** The email being written, e.g. since before a reload. */
@@ -159,9 +173,12 @@ export function ApplicationView({
   posting,
   match,
   requirements,
+  facts: factsAtLoad,
   activity,
   resume,
   letter,
+  themes,
+  baseThemeId,
   email,
   writingEmail,
   attachments,
@@ -181,7 +198,15 @@ export function ApplicationView({
 }: ApplicationViewProps) {
   const router = useRouter();
   const [tab, setTab] = useState(initialTab);
+  // Kept here: the Job posting tab is drawn again on every visit, and switching tabs doesn't reload the page.
+  const [facts, setFacts] = useState(factsAtLoad);
   const [followLayout, showFollowLayout] = useOptimistic(application.followThemeLayout);
+  const [photoChoice, showPhotoChoice] = useOptimistic(application.showPhoto);
+  const showPhoto = photoChoice ?? profile.photo?.onResumes ?? false;
+  // A theme just picked from the Theme menu, until the page has it (#226).
+  const [themeChoice, showThemeChoice] = useOptimistic<ThemeData | null>(null);
+  const resumeTheme = themeChoice ?? resume?.theme;
+  const letterTheme = themeChoice ?? letter?.theme;
   const [, startTransition] = useTransition();
   const [editing, setEditing] = useState<string | null>(null);
   // Texts being saved, shown in place until the page has the saved version.
@@ -224,6 +249,21 @@ export function ApplicationView({
     startTransition(async () => {
       showFollowLayout(follow);
       toastResult(await setFollowThemeLayout({ id: application.id, follow }));
+    });
+
+  const changeTheme = (themeId: string) =>
+    startTransition(async () => {
+      showThemeChoice(themes.find((theme) => theme.id === themeId) ?? null);
+      toastResult(await setApplicationTheme({ id: application.id, themeId }));
+    });
+  const themeMenu = (current: ThemeData) => (
+    <ThemeMenu themes={themes} baseThemeId={baseThemeId} current={current} onChange={changeTheme} />
+  );
+
+  const changePhoto = (show: boolean) =>
+    startTransition(async () => {
+      showPhotoChoice(show);
+      toastResult(await setShowPhoto({ id: application.id, show }));
     });
 
   const save = (kind: DocumentKind, unit: Unit, text: string) => {
@@ -426,12 +466,20 @@ export function ApplicationView({
       toast(`Added “${result.data.name}” to your skills. Attach it to a role under Experience to make it count.`);
     });
 
-  /** "Put back" something left out to fit one page (E10-10). */
-  const putBack = (index: number) =>
+  /** "Put back" something left out, to fit the page limit (E10-10) or by hand (#217). */
+  const putBack = (index: number, pageLimit = resume?.trimmed?.[index] ? byPageLimit(resume.trimmed[index]) : false) =>
     startTransition(async () => {
       const result = await putBackTrimmed({ id: application.id, index });
       if (!result.ok) return toast(result.error);
-      toast("Put back. The resume may run over one page now.");
+      toast(pageLimit ? "Put back. The resume may run over its page limit now." : "Put back.");
+    });
+
+  /** "Leave out" on a part of the tailored resume (#217), with Undo on the toast. */
+  const leaveOut = (unit: Unit) =>
+    startTransition(async () => {
+      const result = await leaveOutUnit({ id: application.id, unitId: unit.id });
+      if (!result.ok) return toast(result.error);
+      toast(`Left out: ${unit.label}.`, { action: { label: "Undo", onClick: () => putBack(result.data.index, false) } });
     });
 
   /** "Undo" under a reply (E8-6): puts back what it changed. */
@@ -461,7 +509,12 @@ export function ApplicationView({
       const unit = units.find((entry) => entry.id === id);
       if (!unit) return plainUnit({ id, className, head, children });
       const key = keyOf(kind, id);
-      const written = kind === DocumentKind.EMAIL ? WRITTEN_EMAIL_UNITS.has(id) : !isFrameUnit(id) || WRITTEN_FRAME_UNITS.has(id);
+      const written =
+        kind === DocumentKind.EMAIL
+          ? WRITTEN_EMAIL_UNITS.has(id)
+          : kind === DocumentKind.RESUME
+            ? !isPublicationUnit(id)
+            : !isFrameUnit(id) || WRITTEN_FRAME_UNITS.has(id);
       return (
         <UnitFrame
           id={id}
@@ -478,6 +531,7 @@ export function ApplicationView({
           onRegenerate={written ? () => void regenerate(kind, unit, { stored: stored.has(id) }) : undefined}
           // The chat only edits parts the letter stores.
           onAskAi={written && stored.has(id) ? () => askAbout(kind, unit) : undefined}
+          onLeaveOut={kind === DocumentKind.RESUME ? () => leaveOut(unit) : undefined}
         >
           {children}
         </UnitFrame>
@@ -567,6 +621,11 @@ export function ApplicationView({
         actions={
           <>
             {application.archived && <span className="rounded-full bg-track px-3 py-1.5 text-meta text-muted">Archived</span>}
+            {application.awaitingReview && (
+              <Link href="/agent" className="rounded-full bg-warning-surface px-3 py-1.5 text-meta text-warning hover:text-warning">
+                From the job agent · waiting for review
+              </Link>
+            )}
             <StatusControl id={application.id} status={application.status} interviewAt={application.nextInterviewAt} timeZone={timeZone} />
             {(resume || letter) && (
               // The document on screen; from the Job posting tab, the resume (E8-8).
@@ -599,7 +658,7 @@ export function ApplicationView({
 
       <div className="@container flex min-h-0 flex-1 flex-wrap @min-[780px]/page:flex-nowrap">
         <TabsContent value="resume" className="flex min-h-0 min-w-0 flex-[999_1_480px]">
-          {resume && resumeUnits ? (
+          {resume && resumeTheme && resumeUnits ? (
             <DocumentPreview
               meta={viewed(DocumentKind.RESUME) ? undefined : hint}
               notice={
@@ -611,19 +670,21 @@ export function ApplicationView({
               }
               label={
                 <span className="flex flex-wrap items-center gap-x-4 gap-y-1">
-                  <span>Tailored resume · {resume.theme.name} theme</span>
-                  {hasSidebar(resume.theme.layout) && (
-                    <LayoutSwitch checked={followLayout} onCheckedChange={changeLayout} />
+                  <span className="flex items-center gap-1">Tailored resume · {themeMenu(resumeTheme)}</span>
+                  {hasSidebar(resumeTheme.layout) && (
+                    <PreviewSwitch label="Sidebar layout" checked={followLayout} onCheckedChange={changeLayout} />
                   )}
+                  {profile.photo && <PreviewSwitch label="Photo" checked={showPhoto} onCheckedChange={changePhoto} />}
                   {historyButton(DocumentKind.RESUME)}
                 </span>
               }
             >
               <TailoredResume
-                resume={{ ...resume, units: viewed(DocumentKind.RESUME)?.units ?? resumeUnits }}
+                resume={{ ...resume, theme: resumeTheme, units: viewed(DocumentKind.RESUME)?.units ?? resumeUnits }}
                 profile={profile}
                 paper={paper}
                 followThemeLayout={followLayout}
+                showPhoto={photoChoice}
                 language={application.language}
                 includeReferences={includeReferences}
                 renderUnit={viewed(DocumentKind.RESUME) ? plainUnit : unitsOf(DocumentKind.RESUME, resumeUnits)}
@@ -635,11 +696,12 @@ export function ApplicationView({
         </TabsContent>
 
         <TabsContent value="letter" className="flex min-h-0 min-w-0 flex-[999_1_480px]">
-          {letter && letterUnits ? (
+          {letter && letterTheme && letterUnits ? (
             <DocumentPreview
               label={
                 <span className="flex flex-wrap items-center gap-x-4 gap-y-1">
                   <span>Cover letter · {aboutWords(paragraphs)}</span>
+                  {themeMenu(letterTheme)}
                   {historyButton(DocumentKind.COVER_LETTER)}
                 </span>
               }
@@ -647,7 +709,7 @@ export function ApplicationView({
               notice={viewed(DocumentKind.COVER_LETTER) ? versionBanner(viewed(DocumentKind.COVER_LETTER)!) : undefined}
             >
               <TailoredLetter
-                letter={{ ...letter, units: viewed(DocumentKind.COVER_LETTER)?.units ?? letterUnits }}
+                letter={{ ...letter, theme: letterTheme, units: viewed(DocumentKind.COVER_LETTER)?.units ?? letterUnits }}
                 profile={profile}
                 paper={paper}
                 company={application.company}
@@ -684,7 +746,15 @@ export function ApplicationView({
         </TabsContent>
 
         <TabsContent value="posting" className="flex min-h-0 min-w-0 flex-[999_1_480px]">
-          <PostingTab posting={posting} match={match} requirements={requirements} onAddSkill={(index) => addSkill(index)} />
+          <PostingTab
+            applicationId={application.id}
+            posting={posting}
+            match={match}
+            requirements={requirements}
+            onAddSkill={(index) => addSkill(index)}
+            facts={facts}
+            setFacts={setFacts}
+          />
         </TabsContent>
 
         <TabsContent value="notes" className="flex min-h-0 min-w-0 flex-[999_1_480px]">
@@ -759,8 +829,11 @@ function useFlashing() {
   return { keys, start };
 }
 
-/** The Resume tab's switch between the theme's sidebar layout and a single column (decided in E5-1 #42). */
-function LayoutSwitch({ checked, onCheckedChange }: { checked: boolean; onCheckedChange: (checked: boolean) => void }) {
+/**
+ * A small switch above the Resume tab's preview: between the theme's sidebar
+ * layout and a single column (decided in E5-1 #42), and for the photo (#224).
+ */
+function PreviewSwitch({ label, checked, onCheckedChange }: { label: string; checked: boolean; onCheckedChange: (checked: boolean) => void }) {
   const id = useId();
   return (
     <span className="flex items-center gap-2">
@@ -773,7 +846,7 @@ function LayoutSwitch({ checked, onCheckedChange }: { checked: boolean; onChecke
         <Switch.Thumb className="block size-3 rounded-full bg-white shadow-knob data-[state=checked]:translate-x-3 motion-safe:transition-transform" />
       </Switch.Root>
       <label htmlFor={id} className="cursor-pointer">
-        Sidebar layout
+        {label}
       </label>
     </span>
   );
