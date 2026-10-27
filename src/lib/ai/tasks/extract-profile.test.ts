@@ -16,8 +16,15 @@ Design Lead, Acme Payments | Mar 2021 to present
 - Set up the design system in Figma
 Product Designer, Fieldnote | 2017 – 2021
 
+Projects
+Payout simulator, github.com/johndoe/payout-sim | 2023
+- Built a simulator for payout edge cases
+
 Education
 MSc Interaction Design, TU Delft, 2015 – 2017
+
+Publications
+Doe, J.*, & Roe, R.* (2024). Calm payouts. Journal of Studies, 12(3), 45–67. doi:10.5555/12345678
 
 Skills: Figma, Design systems, User research
 Languages: Dutch (native), English (fluent), German`;
@@ -60,7 +67,26 @@ const answer = {
     { role: "Product Designer", company: "Fieldnote", location: null, startYear: 2017, startMonth: 0, endYear: 2021, endMonth: null, current: false, bullets: [], skills: [] },
     { role: "", company: "", location: null, startYear: null, startMonth: null, endYear: null, endMonth: null, current: false, bullets: [], skills: [] },
   ],
+  projects: [
+    {
+      name: "Payout simulator",
+      link: "github.com/johndoe/payout-sim",
+      startYear: 2023,
+      startMonth: null,
+      endYear: null,
+      endMonth: null,
+      current: false,
+      bullets: ["- Built a simulator for payout edge cases"],
+      skills: ["figma"],
+    },
+    { name: " ", link: null, startYear: null, startMonth: null, endYear: null, endMonth: null, current: false, bullets: [], skills: [] },
+  ],
   education: [{ degree: "MSc Interaction Design", school: "TU Delft", startYear: 2015, startMonth: null, endYear: 2017, endMonth: null, current: false, notes: null }],
+  publications: [
+    { citation: "Doe, J.*, & Roe, R.* (2024). Calm payouts. Journal of Studies, 12(3), 45–67.", link: "doi:10.5555/12345678" },
+    { citation: "Doe, J. (2025). An invented paper.", link: null },
+    { citation: " ", link: null },
+  ],
   references: [{ name: "Jane Doe", relation: "Former manager", company: "Fieldnote", email: null, phone: null }],
 };
 
@@ -80,7 +106,7 @@ describe("extractProfile (E4-10)", () => {
   it("checks the answer: dates in range, levels, one of each skill, and names looked up in the resume", async () => {
     const provider = new MockProvider({ reply: () => answer });
     const { data, promptVersion } = await extractProfile(provider, { resume: RESUME, today: new Date("2026-09-29") }, options);
-    expect(promptVersion).toBe("extract-profile@1");
+    expect(promptVersion).toBe("extract-profile@3");
     expect(data.basics).toEqual({
       name: "John Doe",
       headline: "Senior Product Designer",
@@ -130,7 +156,27 @@ describe("extractProfile (E4-10)", () => {
         unverified: [],
       },
     ]);
+    // Projects (PRO-13) are read like roles; one without a name is dropped.
+    expect(data.projects).toEqual([
+      {
+        name: "Payout simulator",
+        link: "github.com/johndoe/payout-sim",
+        bullets: "Built a simulator for payout edge cases",
+        skills: ["Figma"],
+        startYear: 2023,
+        startMonth: null,
+        endYear: null,
+        endMonth: null,
+        current: false,
+        unverified: [],
+      },
+    ]);
     expect(data.education[0]).toMatchObject({ degree: "MSc Interaction Design", school: "TU Delft", unverified: [] });
+    // Publications (#218) word for word, their asterisks kept as asterisks; one not in the resume is marked.
+    expect(data.publications).toEqual([
+      { citation: "Doe, J.\\*, & Roe, R.\\* (2024). Calm payouts. Journal of Studies, 12(3), 45–67.", link: "https://doi.org/10.5555/12345678", unverified: [] },
+      { citation: "Doe, J. (2025). An invented paper.", link: "", unverified: ["Doe, J. (2025). An invented paper."] },
+    ]);
     // Not in the resume: marked for checking.
     expect(data.references).toEqual([{ name: "Jane Doe", relation: "Former manager", company: "Fieldnote", email: "", phone: "", unverified: ["Jane Doe"] }]);
   });

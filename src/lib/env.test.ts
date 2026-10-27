@@ -25,12 +25,15 @@ describe("parseEnv", () => {
       ...valid,
       DOSSIER_DATA_DIR: "/data",
       DOSSIER_BACKUP_RETENTION_DAYS: 14,
-      DOSSIER_TELEMETRY: "on",
+      DOSSIER_TELEMETRY: undefined,
     });
   });
 
   it("reads whether the usage ping is on", () => {
-    expect(parseEnv({ ...valid, DOSSIER_TELEMETRY: "" }).DOSSIER_TELEMETRY).toBe("on");
+    // Unset or empty: not decided, so Dossier asks (#172).
+    expect(parseEnv({ ...valid, DOSSIER_TELEMETRY: "" }).DOSSIER_TELEMETRY).toBeUndefined();
+    expect(parseEnv(valid).DOSSIER_TELEMETRY).toBeUndefined();
+    expect(parseEnv({ ...valid, DOSSIER_TELEMETRY: "ON" }).DOSSIER_TELEMETRY).toBe("on");
     expect(parseEnv({ ...valid, DOSSIER_TELEMETRY: " Off " }).DOSSIER_TELEMETRY).toBe("off");
     expect(problems({ ...valid, DOSSIER_TELEMETRY: "false" })).toEqual(['DOSSIER_TELEMETRY must be on or off (got "false").']);
   });
@@ -125,7 +128,7 @@ describe("parseEnv", () => {
       }),
     ).toEqual([
       'DOSSIER_BACKUP_RETENTION_DAYS must be a whole number of days (got "two weeks").',
-      'DOSSIER_AI_PROVIDER must be one of local, openai, anthropic (got "gemini").',
+      'DOSSIER_AI_PROVIDER must be one of local, openai, anthropic, mistral, lmstudio (got "gemini").',
       "DOSSIER_AI_URL must be an http:// or https:// URL.",
     ]);
     expect(problems({ ...valid, DOSSIER_BACKUP_RETENTION_DAYS: "0" })).toEqual([
@@ -152,6 +155,15 @@ describe("job search variables (E14-4)", () => {
       DOSSIER_ADZUNA_APP_ID: "app",
       DOSSIER_ADZUNA_KEY: "adz",
     });
+  });
+
+  it("reads whether the Bundesagentur für Arbeit is offered, and refuses choosing it while it's off (#223)", () => {
+    expect(parseEnv(valid).DOSSIER_JOBS_ARBEITSAGENTUR).toBeUndefined();
+    expect(parseEnv({ ...valid, DOSSIER_JOBS_ARBEITSAGENTUR: " OFF " }).DOSSIER_JOBS_ARBEITSAGENTUR).toBe("off");
+    expect(problems({ ...valid, DOSSIER_JOBS_ARBEITSAGENTUR: "no" })).toEqual(['DOSSIER_JOBS_ARBEITSAGENTUR must be on or off (got "no").']);
+    expect(problems({ ...valid, DOSSIER_JOBS_SOURCE: "arbeitsagentur", DOSSIER_JOBS_ARBEITSAGENTUR: "off" })).toEqual([
+      "DOSSIER_JOBS_SOURCE is arbeitsagentur, but DOSSIER_JOBS_ARBEITSAGENTUR is off. Choose another source, or remove one of the two.",
+    ]);
   });
 
   it("rejects sources and hosts it doesn't know, without echoing keys", () => {

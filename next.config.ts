@@ -14,6 +14,21 @@ const nextConfig: NextConfig = {
     serverFunctions: false,
   },
   poweredByHeader: false,
+  // The calendar moved onto the dashboard (E15-6). The query goes along, so
+  // an old link's ?date= opens that day there.
+  async redirects() {
+    return [{ source: "/calendar", destination: "/", permanent: false }];
+  },
+  // The Claude connector's sign-in metadata (#221, src/lib/connector/oauth.ts),
+  // at the addresses OAuth clients look for it, with or without the resource's path.
+  async rewrites() {
+    return [
+      { source: "/.well-known/oauth-authorization-server", destination: "/api/oauth/metadata" },
+      { source: "/.well-known/oauth-authorization-server/:path*", destination: "/api/oauth/metadata" },
+      { source: "/.well-known/oauth-protected-resource", destination: "/api/oauth/protected-resource" },
+      { source: "/.well-known/oauth-protected-resource/:path*", destination: "/api/oauth/protected-resource" },
+    ];
+  },
   // On every response (E11-5); the Content-Security-Policy comes from the
   // proxy, since it needs a nonce per request. HSTS is left to the reverse
   // proxy that serves HTTPS.

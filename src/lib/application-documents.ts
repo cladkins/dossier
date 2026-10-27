@@ -28,6 +28,7 @@ export const loadApplication = cache(async (id: string) => {
       messages: { orderBy: { createdAt: "asc" } },
       notes: true,
       events: { select: { id: true, to: true, at: true } },
+      facts: { select: { id: true, text: true }, orderBy: [{ sort: "asc" }, { createdAt: "asc" }] },
     },
   });
   if (!application) notFound();
@@ -48,7 +49,7 @@ export function calendarDay(date = new Date()): Date {
   return new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
 }
 
-/** A tailored document's units and the theme it's shown in, with what was left out to fit one page. */
+/** A tailored document's units and the theme it's shown in, with what was left out to fit its page limit. */
 export type DocumentData = { units: Unit[]; theme: ThemeData; trimmed?: Trimmed };
 
 /**

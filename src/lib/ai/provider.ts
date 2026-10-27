@@ -1,11 +1,11 @@
-import { prettifyError, type z } from "zod";
+import { prettifyError, toJSONSchema, type z } from "zod";
 
 import type { AiProvider as AiProviderKind, Creativity } from "@/generated/prisma/enums";
 
 import { AiError, toAiError } from "./errors";
 
 // One interface for every AI provider (E6-1): a local model through Ollama or
-// llama.cpp, any OpenAI-compatible server, or Anthropic.
+// llama.cpp, LM Studio, any OpenAI-compatible server, Anthropic or Mistral.
 
 export type ChatMessage = { role: "user" | "assistant"; content: string };
 
@@ -215,6 +215,11 @@ function matchingBracket(text: string, start: number): number {
     }
   }
   return -1;
+}
+
+/** `system` with the answer's JSON schema spelled out, for a model that can't be sent it or does better seeing it. */
+export function withJsonSchema(system: string, schema: z.ZodType): string {
+  return `${system}\n\nReply with only a JSON object, no other text, that matches this JSON schema:\n${JSON.stringify(toJSONSchema(schema))}`;
 }
 
 const MAX_PROBLEM_LENGTH = 1_000;

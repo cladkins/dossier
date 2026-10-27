@@ -1,12 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { encryptApiKey } from "./api-key";
-import { resolveAiConfig } from "./config";
+import { isAiUsable, resolveAiConfig } from "./config";
 import { AiError } from "./errors";
 import { createProvider } from "./index";
 
 vi.mock("@/lib/env", () => ({ env: { DOSSIER_SECRET: "a".repeat(32) } }));
 vi.mock("@/lib/prisma", () => ({ prisma: {} }));
+const saved = vi.hoisted(() => ({ settings: { provider: null, baseUrl: null, model: null, apiKeyEnc: null } as Record<string, unknown> }));
+vi.mock("@/lib/settings-data", () => ({ loadSettings: async () => saved.settings }));
 
 const noEnv = {} as Parameters<typeof resolveAiConfig>[1];
 const nothingSaved = { provider: null, baseUrl: null, model: null, apiKeyEnc: null };
@@ -38,6 +40,25 @@ describe("resolveAiConfig", () => {
     });
   });
 
+  it("knows Mistral's address and a default model", () => {
+    expect(resolveAiConfig(nothingSaved, { DOSSIER_AI_PROVIDER: "mistral", DOSSIER_AI_KEY: "mk-env" })).toMatchObject({
+      provider: "MISTRAL",
+      baseUrl: "https://api.mistral.ai/v1",
+      model: "mistral-medium-latest",
+      apiKey: "mk-env",
+      timeoutMs: 120_000,
+    });
+  });
+
+  it("finds LM Studio on the Docker host, as patient as a local model", () => {
+    expect(resolveAiConfig(nothingSaved, { DOSSIER_AI_PROVIDER: "lmstudio" })).toMatchObject({
+      provider: "LMSTUDIO",
+      baseUrl: "http://host.docker.internal:1234",
+      model: null,
+      timeoutMs: 300_000,
+    });
+  });
+
   it("prefers what's saved in Settings, with its own key", () => {
     const saved = { provider: "OPENAI" as const, baseUrl: "https://llm.example/v1", model: "gpt-x", apiKeyEnc: encryptApiKey("sk-saved") };
     const config = resolveAiConfig(saved, { DOSSIER_AI_PROVIDER: "local", DOSSIER_AI_URL: "http://ollama:11434", DOSSIER_AI_KEY: "sk-env" });
@@ -64,5 +85,28 @@ describe("createProvider", () => {
     expect(createProvider({ ...base, provider: "LOCAL" }).kind).toBe("LOCAL");
     expect(createProvider({ ...base, provider: "OPENAI" }).kind).toBe("OPENAI");
     expect(createProvider({ ...base, provider: "ANTHROPIC" }).kind).toBe("ANTHROPIC");
+    expect(createProvider({ ...base, provider: "MISTRAL" }).kind).toBe("MISTRAL");
+    expect(createProvider({ ...base, provider: "LMSTUDIO" }).kind).toBe("LMSTUDIO");
+  });
+});
+
+describe("isAiUsable (#221)", () => {
+  const usable = async (settings: Record<string, unknown>) => {
+    saved.settings = { provider: null, baseUrl: null, model: null, apiKeyEnc: null, ...settings };
+    return isAiUsable();
+  };
+
+  it("needs a provider with its model", async () => {
+    expect(await usable({})).toBe(false);
+    expect(await usable({ provider: "LOCAL" })).toBe(false);
+    expect(await usable({ provider: "LOCAL", model: "qwen2.5:7b" })).toBe(true);
+    // An OpenAI-compatible server may need no key.
+    expect(await usable({ provider: "OPENAI", baseUrl: "http://llm.lan/v1", model: "gpt-x" })).toBe(true);
+  });
+
+  it("needs a readable key for the hosted providers that always need one", async () => {
+    expect(await usable({ provider: "ANTHROPIC" })).toBe(false);
+    expect(await usable({ provider: "ANTHROPIC", apiKeyEnc: encryptApiKey("sk-saved") })).toBe(true);
+    expect(await usable({ provider: "MISTRAL", apiKeyEnc: encryptApiKey("sk", "b".repeat(32)) })).toBe(false);
   });
 });

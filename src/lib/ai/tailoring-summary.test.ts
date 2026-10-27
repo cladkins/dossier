@@ -32,12 +32,18 @@ describe("tailoringSummary (E7-6)", () => {
     expect(summary.list).toEqual([
       "Rewrote your summary for the Senior Product Designer role",
       "Reworded your Northwind Logistics and Fieldnote roles for this job",
+      "Kept your publication word for word",
       "Ordered your skills by what Ledgerly asks for",
       "Left out references, since the posting doesn't ask for them",
       "Wrote a warm cover letter",
       "Worth being ready to talk about “Experience with payments or fintech”, since it isn't in your profile",
     ]);
     expect(summary.foot).toBe("Nothing invented: every line comes from your profile.");
+  });
+
+  it("mentions projects it reworded (PRO-13)", () => {
+    const resume = demoResumeUnits().map((unit) => (unit.id === "project:p1" ? { ...unit, text: "Built a token pipeline for design teams" } : unit));
+    expect(tailoringSummary({ ...base, resume }).list).toContain("Reworded your Tidewater design tokens project for this job");
   });
 
   it("only claims what happened", () => {

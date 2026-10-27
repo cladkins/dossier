@@ -9,6 +9,9 @@ import { PRINT_TOKEN_HEADER, printTokenTenant } from "@/lib/pdf/print-token";
 import { signTenantHeader, TENANT_HEADER, USER_NAME_HEADER } from "@/lib/tenant";
 import { ensureTenant } from "@/lib/tenants";
 
+/** The Claude connector's endpoint, its sign-in and the metadata that points to them. */
+const CONNECTOR_PATHS = /^\/(?:api\/(?:mcp|oauth)(?:\/|$)|\.well-known\/oauth-(?:authorization-server|protected-resource)(?:\/|$))/;
+
 /**
  * Works out who a request is for, from the headers Authentik's proxy adds
  * (see src/lib/auth/proxy-user.ts), makes sure they have a database, and
@@ -21,6 +24,10 @@ import { ensureTenant } from "@/lib/tenants";
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
   if (pathname === "/login") return pass(request, null);
+  // The Claude connector (#221) brings its own credentials, an OAuth token
+  // that names the person it's for; its routes check it and run as them
+  // (src/lib/connector/oauth.ts). They answer 404 while it's off.
+  if (CONNECTOR_PATHS.test(pathname)) return pass(request, null);
 
   const user = proxyUser(withDevUser(request.headers), env.DOSSIER_OWNER);
   if (user) {

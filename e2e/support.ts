@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { crc32, deflateSync } from "node:zlib";
 
 import type { Page } from "@playwright/test";
 import { Pool } from "pg";
@@ -59,8 +60,9 @@ export function appEnv(): Record<string, string> {
     DOSSIER_GOOGLE_TEST_BASE_URL: `http://localhost:${FAKE_GOOGLE_PORT}`,
     // A production server, so it would ask GitHub for the latest release daily.
     DOSSIER_UPDATES_TEST_BASE_URL: `http://localhost:${FAKE_JOBS_PORT}/github`,
-    // A production server, so it would send the usage ping.
-    DOSSIER_TELEMETRY: "off",
+    // A production server asks whether to send the usage ping (#172); resetData
+    // answers no, and a yes sends it to the fake job sources, never the project.
+    DOSSIER_USAGE_PING_TEST_URL: `http://localhost:${FAKE_JOBS_PORT}/ping`,
     PORT: String(SERVER_PORT),
   };
 }
@@ -73,7 +75,26 @@ export async function sql<Row extends object = Record<string, unknown>>(text: st
   return (await pool.query<Row>(text, values)).rows;
 }
 
-/** Empties every table, then loads the built-in themes and the demo data. */
+/** USAGE_PING_TEXT_VERSION in src/lib/usage-ping.ts, which a spec can't import (it's server-only). */
+const USAGE_PING_TEXT_VERSION = "1";
+
+/** Answers the usage ping question (#172) as if in the dialog; null leaves it unanswered, so the dialog shows. */
+export async function answerUsagePing(choice: "on" | "off" | null): Promise<void> {
+  await sql(`DELETE FROM "Setting" WHERE key IN ('usagePingChoice', 'usagePingChoiceAt', 'usagePingChoiceText')`);
+  if (!choice) return;
+  await sql(
+    `INSERT INTO "Setting" (key, value, "updatedAt") VALUES ('usagePingChoice', $1, now()), ('usagePingChoiceAt', $2, now()), ('usagePingChoiceText', $3, now())`,
+    [choice, new Date().toISOString(), USAGE_PING_TEXT_VERSION],
+  );
+}
+
+/** The usage pings the fake receiver got so far. */
+export async function fakePings(): Promise<{ id: string; version: string }[]> {
+  const response = await fetch(`http://localhost:${FAKE_JOBS_PORT}/pings`);
+  return ((await response.json()) as { pings: { id: string; version: string }[] }).pings;
+}
+
+/** Empties every table, then loads the built-in themes and the demo data, with the usage ping question answered no. */
 export async function resetData(): Promise<void> {
   const tables = await sql<{ tablename: string }>(
     "SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tablename <> '_prisma_migrations'",
@@ -83,6 +104,13 @@ export async function resetData(): Promise<void> {
     env: { ...process.env, DATABASE_URL: e2eDatabaseUrl() },
     stdio: "pipe",
   });
+  await answerUsagePing("off");
+}
+
+/** The startups' pages the app asked the fake sites for (#222), with its user agent. */
+export async function fakeStartupRequests(): Promise<{ url: string; userAgent: string }[]> {
+  const response = await fetch(`http://localhost:${FAKE_JOBS_PORT}/startup-requests`);
+  return ((await response.json()) as { requests: { url: string; userAgent: string }[] }).requests;
 }
 
 /** How many searches the fake JSearch has answered so far (E14-10). */
@@ -105,6 +133,13 @@ export type FakeGoogleState = { sent: { id: string; threadId: string; raw: strin
 export async function fakeGoogle(): Promise<FakeGoogleState> {
   const response = await fetch(`http://localhost:${FAKE_GOOGLE_PORT}/state`);
   return (await response.json()) as FakeGoogleState;
+}
+
+/** What the fake AI was last asked, as one text (GET /last), to check what a prompt carried. */
+export async function lastPrompt(): Promise<string> {
+  const response = await fetch(`http://localhost:${FAKE_AI_PORT}/last`);
+  const { messages } = (await response.json()) as { messages: { content: string }[] };
+  return messages.map((message) => message.content).join("\n\n");
 }
 
 /** Changes the fake Google's calendar as if in Google Calendar (E15-6): adds an event, or changes or deletes one by its id. */
@@ -130,4 +165,41 @@ export async function forgetGoogle(): Promise<void> {
   await sql(`DELETE FROM "GoogleAccount"`);
   await sql(`DELETE FROM "Setting" WHERE key IN ('googleClientId', 'googleClientSecretEnc')`);
   await sql(`UPDATE "Application" SET "interviewEventId" = NULL, "interviewCalendarId" = NULL`);
+}
+
+/**
+ * A made-up portrait as a PNG, for the photo (#224): a head and shoulders on
+ * a blue background, wider than 3:4 so the crop has something to cut.
+ */
+export function portraitPng(width = 900, height = 800): Buffer {
+  const pixel = (x: number, y: number): [number, number, number] => {
+    const head = (x - width / 2) ** 2 + (y - height * 0.4) ** 2 < (height * 0.17) ** 2;
+    const shoulders = ((x - width / 2) / (width * 0.3)) ** 2 + ((y - height) / (height * 0.3)) ** 2 < 1;
+    if (head) return [224, 182, 150];
+    if (shoulders) return [60, 70, 90];
+    return [120, 150 + Math.round((y / height) * 60), 200];
+  };
+  const rows = Buffer.alloc((width * 3 + 1) * height);
+  for (let y = 0; y < height; y++) {
+    const start = y * (width * 3 + 1);
+    for (let x = 0; x < width; x++) rows.set(pixel(x, y), start + 1 + x * 3);
+  }
+  const chunk = (type: string, data: Buffer) => {
+    const body = Buffer.concat([Buffer.from(type, "ascii"), data]);
+    const length = Buffer.alloc(4);
+    length.writeUInt32BE(data.length);
+    const check = Buffer.alloc(4);
+    check.writeUInt32BE(crc32(body));
+    return Buffer.concat([length, body, check]);
+  };
+  const header = Buffer.alloc(13);
+  header.writeUInt32BE(width, 0);
+  header.writeUInt32BE(height, 4);
+  header.set([8, 2, 0, 0, 0], 8);
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk("IHDR", header),
+    chunk("IDAT", deflateSync(rows)),
+    chunk("IEND", Buffer.alloc(0)),
+  ]);
 }
